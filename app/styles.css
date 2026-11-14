@@ -333,3 +333,5 @@ button.ancho { width: 100%; margin-top: 14px; }
 .compra-total { font: 600 1.2rem var(--serif); }
 .compra-linea { display: flex; justify-content: space-between; gap: 12px; padding: 8px 16px; border-top: 1px solid var(--linea); font-size: 0.92rem; }
 .compra-tienda { border-top: 1px solid var(--linea); }
+input[type=date] { display: block; width: 100%; margin-top: 6px; min-height: 46px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--linea); background: var(--elevada); font-size: 16px; }
+.compra-linea .mini { min-height: 28px; padding: 0 8px; }

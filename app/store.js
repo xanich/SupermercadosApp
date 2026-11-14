@@ -40,6 +40,13 @@ function filasSumadas(e, cantidades) {
     }));
 }
 
+// Fecha y lineas nuevas de una compra editada; el total sale siempre de sumar las lineas.
+function datosCompra(c, { fecha, lineas }) {
+  const nuevas = lineas || c.lineas;
+  const total = Math.round(nuevas.reduce((s, x) => s + (Number(x.coste) || 0), 0) * 100) / 100;
+  return { fecha: fecha || c.fecha, lineas: nuevas, total };
+}
+
 async function cargarJson(url) {
   try {
     const r = await fetch(url, { cache: 'no-cache' });
@@ -208,6 +215,13 @@ export async function crearStoreLocal() {
   };
   s.borrarCompra = async (id) => {
     e.compras = e.compras.filter((c) => c.id !== id);
+    guardar();
+  };
+  // Cambia la fecha y/o las lineas de una compra; el total siempre es la suma de las lineas.
+  s.editarCompra = async (id, { fecha, lineas }) => {
+    const c = e.compras.find((x) => x.id === id);
+    if (!c) throw new Error('No se encuentra la compra.');
+    Object.assign(c, datosCompra(c, { fecha, lineas }));
     guardar();
   };
   s.exportar = () => JSON.stringify({ ...e, candidatos: undefined }, null, 1);
@@ -398,6 +412,14 @@ export async function crearStoreSupabase(config) {
       const del = await sb.from('lista').delete().in('ingrediente_id', ids);
       if (del.error) throw del.error;
     }
+    await recargar();
+  };
+  s.editarCompra = async (id, { fecha, lineas }) => {
+    comprobarCompras();
+    const c = e.compras.find((x) => x.id === id);
+    if (!c) throw new Error('No se encuentra la compra.');
+    const { error } = await sb.from('compras').update(datosCompra(c, { fecha, lineas })).eq('id', id);
+    if (error) throw error;
     await recargar();
   };
   s.borrarCompra = async (id) => {

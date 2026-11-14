@@ -516,12 +516,14 @@ function vistaCompras() {
       <span class="num compra-total">${euro.format(c.total)}</span></button>`;
     if (abierta) {
       const por = {};
-      for (const x of c.lineas) (por[x.tienda || ''] ||= []).push(x);
+      c.lineas.forEach((x, i) => (por[x.tienda || ''] ||= []).push({ ...x, i }));
       h += Object.entries(por).map(([t, ls]) => `<div class="compra-tienda"><div class="tienda-cab">${t ? punto(t) : ''}<h2>${t ? esc(nombreTienda(t)) : 'Sin precio'}</h2>
         <span class="total num">${euro.format(ls.reduce((s, x) => s + (Number(x.coste) || 0), 0))}</span></div>
         ${ls.sort(porNombre).map((x) => `<div class="compra-linea"><span>${esc(x.nombre)} <span class="suave">${fmtCantidad(x.modo, Number(x.cantidad))}</span></span>
-          <span class="num">${x.coste ? euro.format(x.coste) : '—'}</span></div>`).join('')}</div>`).join('');
-      h += `<p class="pie-lista"><button class="peligro" data-acc="borrarCompra" data-id="${esc(c.id)}">Borrar esta compra</button></p>`;
+          <span class="num">${x.coste ? euro.format(x.coste) : '—'}</span>
+          <button class="mini suave-b" data-acc="editarCompraLinea" data-id="${esc(c.id)}" data-i="${x.i}" aria-label="Editar ${esc(x.nombre)}">Editar</button></div>`).join('')}</div>`).join('');
+      h += `<p class="pie-lista"><button data-acc="editarFecha" data-id="${esc(c.id)}">Editar fecha</button>
+        <button class="peligro" data-acc="borrarCompra" data-id="${esc(c.id)}">Borrar esta compra</button></p>`;
     }
     h += '</section>';
   }
@@ -552,6 +554,43 @@ function abrirEditarLinea(id) {
     <p class="suave">Si lo compras en otra tienda o a otro precio, se guarda solo para esta línea y no cambia los precios de Precios.</p>
     <button class="primario" data-acc="guardarLinea">Guardar</button>
     ${it.tienda_compra ? '<button data-acc="autoLinea">Volver al reparto automático</button>' : ''}
+  </div>`;
+  hoja.showModal();
+}
+
+// Editar una linea de una compra ya guardada (cantidad, tienda y precio).
+function abrirEditarCompraLinea(cid, i) {
+  const c = store.estado.compras.find((x) => x.id === cid);
+  const x = c?.lineas[i];
+  if (!x) return;
+  const peso = x.modo === 'peso';
+  ui.ec = { cid, i };
+  ui.hoja = 'compraLinea';
+  hoja.innerHTML = `<div class="hoja-int">
+    <div class="hoja-cab"><h2>${esc(x.nombre)}</h2><button class="icono" data-acc="cerrar" aria-label="Cerrar">✕</button></div>
+    <label class="campo"><span>${peso ? 'Gramos' : 'Unidades'}</span>
+      <input type="text" inputmode="decimal" id="ecCant" autocomplete="off" value="${peso ? Math.round(x.cantidad * 1000) : x.cantidad}"></label>
+    <label class="campo"><span>Tienda</span>
+      <select id="ecTienda">${x.tienda ? '' : '<option value="" selected>Sin tienda</option>'}${TIENDAS.map((t) => `<option value="${t.id}" ${t.id === x.tienda ? 'selected' : ''}>${t.nombre}</option>`).join('')}</select></label>
+    <label class="campo"><span>Precio ${peso ? '(€/kg)' : '(€ por unidad)'}</span>
+      <input type="text" inputmode="decimal" id="ecPrecio" autocomplete="off" placeholder="Sin precio" value="${x.precio != null ? Number(x.precio).toFixed(2).replace('.', ',') : ''}"></label>
+    <p class="suave">El total de la compra se recalcula con la suma de sus líneas.</p>
+    <button class="primario" data-acc="guardarCompraLinea">Guardar</button>
+  </div>`;
+  hoja.showModal();
+}
+
+function abrirEditarFecha(cid) {
+  const c = store.estado.compras.find((x) => x.id === cid);
+  if (!c) return;
+  const d = new Date(c.fecha);
+  const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  ui.ec = { cid };
+  ui.hoja = 'compraFecha';
+  hoja.innerHTML = `<div class="hoja-int">
+    <div class="hoja-cab"><h2>Fecha de la compra</h2><button class="icono" data-acc="cerrar" aria-label="Cerrar">✕</button></div>
+    <label class="campo"><span>Día</span><input type="date" id="ecFecha" value="${ymd}"></label>
+    <button class="primario" data-acc="guardarCompraFecha">Guardar</button>
   </div>`;
   hoja.showModal();
 }
@@ -816,7 +855,7 @@ async function accion(fn) {
 hoja.addEventListener('click', (ev) => { if (ev.target === hoja && !['receta', 'nuevo'].includes(ui.hoja)) hoja.close(); });
 hoja.addEventListener('close', () => {
   if (hoja.open) return; // evento tardío de una hoja anterior: ya se ha abierto otra y no hay que borrar su estado
-  ui.hoja = null; ui.receta = null; ui.ni = null; ui.ep = null; ui.le = null;
+  ui.hoja = null; ui.receta = null; ui.ni = null; ui.ep = null; ui.le = null; ui.ec = null;
 });
 
 document.addEventListener('click', (ev) => {
@@ -839,6 +878,30 @@ document.addEventListener('click', (ev) => {
       return accion(async () => { await store.borrarCompra(id); avisar('Compra borrada'); });
     }
     case 'editarLinea': return abrirEditarLinea(id);
+    case 'editarCompraLinea': return abrirEditarCompraLinea(id, Number(b.dataset.i));
+    case 'editarFecha': return abrirEditarFecha(id);
+    case 'guardarCompraFecha': {
+      const v = $('#ecFecha').value;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return alert('Elige un día.');
+      const [y, m, d] = v.split('-').map(Number);
+      const fecha = new Date(y, m - 1, d, 12).toISOString();
+      return accion(async () => { await store.editarCompra(ui.ec.cid, { fecha }); hoja.close(); });
+    }
+    case 'guardarCompraLinea': {
+      const { cid, i } = ui.ec;
+      const c = store.estado.compras.find((x) => x.id === cid);
+      const x = c?.lineas[i];
+      if (!x) return hoja.close();
+      const v = aNumero($('#ecCant').value);
+      if (!Number.isFinite(v) || v <= 0) return alert('Escribe una cantidad mayor que 0.');
+      const textoP = $('#ecPrecio').value.trim();
+      const p = textoP === '' ? null : aNumero(textoP);
+      if (p !== null && (!Number.isFinite(p) || p < 0)) return alert('Escribe un precio válido, por ejemplo 2,50.');
+      const cantidad = x.modo === 'peso' ? Math.round(v) / 1000 : Math.max(1, Math.round(v));
+      const nueva = { ...x, cantidad, tienda: $('#ecTienda').value || null, precio: p, coste: p == null ? 0 : redondear2(p * cantidad) };
+      const lineas = c.lineas.map((l, k) => (k === i ? nueva : l));
+      return accion(async () => { await store.editarCompra(cid, { lineas }); hoja.close(); });
+    }
     case 'autoLinea':
       return accion(async () => {
         await store.setLista(ui.le.id, { tienda_compra: null, precio_pagado: null });
