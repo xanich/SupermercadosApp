@@ -1,0 +1,6 @@
+node_modules/
+.env
+*.local
+data/candidatos.json.bak
+# El Excel original es personal y no hace falta en el repositorio publico
+*.xlsx

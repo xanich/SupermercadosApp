@@ -1,0 +1,25 @@
+name: Actualizar precios (BM y Eroski)
+
+on:
+  schedule:
+    - cron: '30 5 * * *'   # una vez al dia (05:30 UTC)
+  workflow_dispatch: {}     # tambien se puede lanzar a mano desde la pestaña Actions
+
+concurrency:
+  group: precios
+  cancel-in-progress: false
+
+jobs:
+  actualizar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Leer precios y guardarlos en Supabase
+        run: node scraper/run.mjs actualizar
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
