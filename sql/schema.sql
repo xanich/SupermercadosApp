@@ -1,0 +1,73 @@
+-- Esquema para Supabase. Pegar en: Supabase > SQL Editor > New query > Run.
+-- Seguridad: solo usuarios con sesion iniciada (vosotros dos) pueden leer y escribir.
+-- El proceso diario usa la clave "service_role", que se salta estas reglas: guardarla SOLO
+-- como secreto de GitHub, nunca en el codigo de la app.
+
+create table if not exists ingredientes (
+  id        text primary key,           -- p.ej. 'arroz-basmati'
+  nombre    text not null,
+  consulta  text not null,              -- texto con el que se busca en BM y Eroski
+  modo      text not null default 'unidad' check (modo in ('unidad','peso'))
+                                        -- 'peso': se compra por kilos y el precio es €/kg
+);
+alter table ingredientes add column if not exists modo text not null default 'unidad'
+  check (modo in ('unidad','peso'));
+
+-- El producto concreto que compras de cada ingrediente en cada tienda, con su ultimo precio.
+create table if not exists elecciones (
+  id             bigint generated always as identity primary key,
+  ingrediente_id text not null references ingredientes(id) on delete cascade,
+  tienda         text not null check (tienda in ('dia','eroski','bm','carrefour')),
+  nombre         text,                  -- nombre del producto en esa tienda
+  ext_id         text,                  -- id del producto en la tienda (solo BM/Eroski)
+  url            text,
+  precio         numeric(8,2),          -- precio del envase (o €/kg si el ingrediente es 'peso')
+  precio_unidad  numeric(8,2),          -- precio por kg o litro, si se conoce
+  unidad         text check (unidad in ('kg','l')),
+  actualizado    timestamptz default now(),
+  origen         text not null default 'manual' check (origen in ('auto','manual','excel')),
+  unique (ingrediente_id, tienda)
+);
+
+-- Una fila por cambio de precio automatico, para ver la evolucion.
+create table if not exists historial (
+  id             bigint generated always as identity primary key,
+  ingrediente_id text not null references ingredientes(id) on delete cascade,
+  tienda         text not null,
+  precio         numeric(8,2),
+  precio_unidad  numeric(8,2),
+  fecha          timestamptz default now()
+);
+
+-- Lista de la compra compartida.
+create table if not exists lista (
+  ingrediente_id text primary key references ingredientes(id) on delete cascade,
+  cantidad       numeric(8,3) not null default 1,   -- unidades, o kilos si el ingrediente es 'peso'
+  hecho          boolean not null default false
+);
+
+-- Ajustes compartidos (tiendas activas, ahorro minimo por tienda...).
+create table if not exists ajustes (
+  clave  text primary key,
+  valor  jsonb not null
+);
+
+alter table ingredientes enable row level security;
+alter table elecciones   enable row level security;
+alter table historial    enable row level security;
+alter table lista        enable row level security;
+alter table ajustes      enable row level security;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['ingredientes','elecciones','historial','lista','ajustes'] loop
+    execute format('drop policy if exists "solo_autenticados" on %I', t);
+    execute format(
+      'create policy "solo_autenticados" on %I for all to authenticated using (true) with check (true)', t);
+  end loop;
+end $$;
+
+-- Para ver los cambios de la lista en tiempo real en los dos moviles.
+alter publication supabase_realtime add table lista;
+alter publication supabase_realtime add table elecciones;

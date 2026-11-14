@@ -1,0 +1,12 @@
+{
+  "name": "Comparador de la compra",
+  "short_name": "Compra",
+  "description": "Reparte la compra semanal entre supermercados según el precio.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1f7a4d",
+  "lang": "es",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
