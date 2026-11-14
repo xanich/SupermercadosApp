@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { asignar, tiendasDe } from '../app/compare.js';
+import { asignar, tiendasDe, factorMenu, sumarRecetas } from '../app/compare.js';
 
 const e = (precio, extra = {}) => ({ precio, precio_unidad: null, unidad: null, ...extra });
 const el = {
@@ -59,4 +59,24 @@ r = asignar(lista7, carneEl, ['eroski', 'dia'], 0);
 assert.equal(donde(r, 'm'), 'eroski');
 assert.deepEqual(tiendasDe({ carne: true }, ['eroski', 'dia', 'halal']), ['eroski', 'halal']);
 assert.deepEqual(tiendasDe({ carne: false }, ['eroski', 'dia', 'halal']), ['eroski', 'dia']);
+// 8) Menú por persona: recetas para 2 (como las actuales) y alguna para 1.
+assert.equal(factorMenu(2, 'ambos'), 1);
+assert.equal(factorMenu(2, 'p1'), 0.5);
+assert.equal(factorMenu(1, 'ambos'), 2);
+assert.equal(factorMenu(1, 'p2'), 1);
+assert.equal(factorMenu(undefined, 'ambos'), 1); // sin dato: se entiende para 2
+const recs = {
+  pollo: { ingredientes: [{ ingrediente_id: 'pechuga', cantidad: 0.6 }, { ingrediente_id: 'arroz', cantidad: 1 }] },
+  uno: { ingredientes: [{ ingrediente_id: 'arroz', cantidad: 1 }] },
+};
+const ings = [{ id: 'pechuga', modo: 'peso' }, { id: 'arroz', modo: 'unidad' }];
+// Juntos pollo (0,6 kg + 1) + pollo separado de uno (0,3 kg + 0,5 → sube a 2 en total con el otro arroz)
+let t = sumarRecetas([{ receta_id: 'pollo', factor: 1 }, { receta_id: 'pollo', factor: 0.5 }], recs, ings);
+assert.equal(t.pechuga, 0.9);
+assert.equal(t.arroz, 2); // 1 + 0,5 = 1,5 → 2 (no se compra media unidad)
+// Cada uno su receta "para 1": 1 + 1 = 2
+t = sumarRecetas([{ receta_id: 'uno', factor: 1 }, { receta_id: 'uno', factor: 1 }], recs, ings);
+assert.equal(t.arroz, 2);
+// Una receta que ya no existe no suma nada
+assert.deepEqual(sumarRecetas([{ receta_id: 'borrada', factor: 1 }], recs, ings), {});
 console.log('compare.js: todas las pruebas OK');

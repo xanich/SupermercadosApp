@@ -1,6 +1,6 @@
 import { config } from './config.js';
 import { crearStoreLocal, crearStoreSupabase } from './store.js';
-import { TIENDAS, nombreTienda, asignar, tiendasDe, diasDesde, esAntiguo } from './compare.js';
+import { TIENDAS, nombreTienda, asignar, tiendasDe, factorMenu, sumarRecetas, diasDesde, esAntiguo } from './compare.js';
 
 const $ = (s) => document.querySelector(s);
 const vista = $('#vista');
@@ -36,10 +36,30 @@ const MODOS_PRECIO = [
   { id: 'todos', nombre: 'Todos' },
 ];
 
+// Quién usa este móvil ('p1' / 'p2'): se recuerda en el propio móvil, no se comparte.
+const CLAVE_YO = 'super-yo';
+const leerYo = () => {
+  try {
+    const v = localStorage.getItem(CLAVE_YO);
+    return v === 'p1' || v === 'p2' ? v : null;
+  } catch {
+    return null;
+  }
+};
+const guardarYo = (v) => {
+  try {
+    if (v) localStorage.setItem(CLAVE_YO, v);
+    else localStorage.removeItem(CLAVE_YO);
+  } catch {
+    /* sin almacenamiento: se pregunta cada vez */
+  }
+};
+
 let store;
 const ui = {
   tab: 'lista', buscarProd: '', buscarAdd: '', buscarPrecio: '', preciosModo: 'antiguos',
   hoja: null, candidato: null, receta: null, buscarRec: '',
+  yo: leerYo(), menuVer: 'mio', ni: null, ep: null,
 };
 
 // ------------------------------------------------------------------ utilidades
@@ -134,7 +154,8 @@ function vistaLista() {
     for (const x of r.sinPrecio) h += filaItem(x, null, '', '');
     h += '</section>';
   }
-  if (hechos) h += '<p style="text-align:center"><button data-acc="limpiar">Quitar lo comprado</button></p>';
+  h += `<p class="pie-lista">${hechos ? '<button data-acc="limpiar">Quitar lo comprado</button>' : ''}
+    <button class="peligro" data-acc="vaciarLista">Vaciar lista</button></p>`;
   return h;
 }
 
@@ -290,7 +311,7 @@ function vistaRecetas() {
   for (const r of recetas) {
     const usos = Object.values(menu).filter((v) => v === r.id).length;
     h += `<section class="tarjeta"><div class="bloque">
-      <div class="bloque-cab"><h2>${esc(r.nombre)}</h2><button class="mini suave-b" data-acc="editarReceta" data-id="${esc(r.id)}">Editar</button></div>
+      <div class="bloque-cab"><h2>${esc(r.nombre)}${r.personas === 1 ? ' <span class="etq">para 1</span>' : ''}</h2><button class="mini suave-b" data-acc="editarReceta" data-id="${esc(r.id)}">Editar</button></div>
       <p class="suave">${resumenIngredientes(r) || 'Sin ingredientes'}</p>
       <div class="pie-receta"><span class="suave">${usos ? `En el menú ${usos} ${usos === 1 ? 'vez' : 'veces'}` : 'No está en el menú'}</span>
         <button class="mini" data-acc="recetaALista" data-id="${esc(r.id)}">Añadir a la compra</button></div>
@@ -301,38 +322,81 @@ function vistaRecetas() {
 
 const conDesayuno = () => store.estado.ajustes.desayuno !== false;
 const comidasVisibles = () => COMIDAS.filter((c) => c.id !== 'desayuno' || conDesayuno());
-// Huecos del menú que se ven (si el desayuno está oculto, no cuenta).
+const nombresP = () => {
+  const n = store.estado.ajustes.nombres;
+  return [n?.[0] || 'Persona 1', n?.[1] || 'Persona 2'];
+};
+const nombreP = (q) => nombresP()[q === 'p2' ? 1 : 0];
+const esSeparada = (d, c) => `${d}|${c}|p1` in store.estado.menu || `${d}|${c}|p2` in store.estado.menu;
+
+// Huecos del menú con receta que cuentan para la compra (si el desayuno está oculto, no cuenta).
 const huecosMenu = () => {
   const visibles = new Set(comidasVisibles().map((c) => c.id));
-  return Object.entries(store.estado.menu)
-    .filter(([k, rid]) => visibles.has(k.split('|')[1]) && store.estado.recetas[rid]);
+  return Object.entries(store.estado.menu).flatMap(([k, rid]) => {
+    const [dia, comida, quien] = k.split('|');
+    const r = rid && store.estado.recetas[rid];
+    if (!r || !visibles.has(comida)) return [];
+    return [{ dia, comida, quien, receta_id: rid, factor: factorMenu(r.personas, quien) }];
+  });
 };
+
+function selectorReceta(d, c, quien, etiqueta, recetas) {
+  const actual = store.estado.menu[`${d}|${c.id}|${quien}`];
+  return `<label class="linea-menu"><span>${esc(etiqueta)}</span>
+    <select data-acc="menu" data-dia="${d}" data-comida="${c.id}" data-quien="${quien}" aria-label="${esc(c.nombre)} del ${DIAS[d].toLowerCase()}, ${esc(etiqueta)}">
+      <option value="">—</option>
+      ${recetas.map((r) => `<option value="${esc(r.id)}" ${r.id === actual ? 'selected' : ''}>${esc(r.nombre)}${r.personas === 1 ? ' (1 pers.)' : ''}</option>`).join('')}
+    </select></label>`;
+}
+
+function bloqueComida(d, c, recetas, ver) {
+  const sep = esSeparada(d, c.id);
+  const boton = (valor, texto, activo) => `<button data-acc="modoComida" data-dia="${d}" data-comida="${c.id}" data-sep="${valor}" aria-pressed="${activo}">${texto}</button>`;
+  let cuerpo;
+  if (!sep) {
+    cuerpo = selectorReceta(d, c, 'ambos', 'Los dos', recetas);
+  } else {
+    const quienes = ver === 'mio' ? [ui.yo] : ['p1', 'p2'];
+    cuerpo = quienes.map((q) => selectorReceta(d, c, q, nombreP(q), recetas)).join('');
+    if (ver === 'mio') {
+      const otro = ui.yo === 'p1' ? 'p2' : 'p1';
+      const r = store.estado.recetas[store.estado.menu[`${d}|${c.id}|${otro}`]];
+      cuerpo += `<p class="suave otro-menu">${esc(nombreP(otro))}: ${r ? esc(r.nombre) : 'sin receta'}</p>`;
+    }
+  }
+  return `<div class="comida-menu"><div class="cm-cab"><strong>${c.nombre}</strong>
+    <div class="segmentos mini" role="group" aria-label="Cómo coméis: ${c.nombre}">${boton(0, 'Juntos', !sep)}${boton(1, 'Separados', sep)}</div></div>${cuerpo}</div>`;
+}
 
 function vistaMenu() {
   const { menu } = store.estado;
   const recetas = recetasOrdenadas();
   const hoy = (new Date().getDay() + 6) % 7;
   const n = huecosMenu().length;
-  let h = `<div class="cabecera"><div><h1>Menú</h1><p class="suave">${n ? `${n} ${n === 1 ? 'comida planificada' : 'comidas planificadas'}` : 'Elige una receta para cada comida'}</p></div>
+  const ver = ui.yo ? ui.menuVer : 'todos';
+  let h = `<div class="cabecera"><div><h1>Menú</h1><p class="suave">${n ? `${n} ${n === 1 ? 'plato planificado' : 'platos planificados'}` : 'Elige una receta para cada comida'}</p></div>
     <label class="interruptor"><input type="checkbox" data-acc="desayuno" ${conDesayuno() ? 'checked' : ''}> Desayuno</label></div>${avisoTablas()}`;
+  if (!ui.yo) {
+    h += `<section class="tarjeta"><div class="bloque"><h2>¿Quién eres?</h2>
+      <p class="suave">Así este móvil abre directamente tu menú. Se guarda solo en este móvil y se cambia en Ajustes.</p>
+      <div class="quien">${['p1', 'p2'].map((q) => `<button class="primario" data-acc="soyYo" data-q="${q}">${esc(nombreP(q))}</button>`).join('')}</div></div></section>`;
+  } else {
+    h += `<div class="segmentos" role="group" aria-label="Qué menú ver">
+      <button data-acc="verMenu" data-ver="mio" aria-pressed="${ver === 'mio'}">Mi menú · ${esc(nombreP(ui.yo))}</button>
+      <button data-acc="verMenu" data-ver="todos" aria-pressed="${ver === 'todos'}">Los dos</button></div>`;
+  }
   if (!recetas.length) {
     return h + `<div class="vacio"><h2>Primero, las recetas</h2><p>Crea alguna receta y después elígela aquí para cada día.</p>
       <button class="primario" data-acc="ir" data-tab="recetas">Ir a Recetas</button></div>`;
   }
   h += `<div class="acciones-menu"><button class="primario" data-acc="menuALista" ${n ? '' : 'disabled'}>Pasar a la lista</button>
-    <button data-acc="vaciarMenu" ${Object.keys(menu).length ? '' : 'disabled'}>Vaciar semana</button></div>`;
+    <button data-acc="vaciarMenu" ${Object.keys(menu).length ? '' : 'disabled'}>Vaciar semana</button></div>
+    <p class="suave nota-menu">«Pasar a la lista» suma el menú de los dos, lo veas como lo veas.</p>`;
   for (let d = 0; d < 7; d++) {
     h += `<section class="tarjeta${d === hoy ? ' hoy' : ''}"><div class="bloque">
-      <div class="bloque-cab"><h2>${DIAS[d]}</h2>${d === hoy ? '<span class="etq auto">hoy</span>' : ''}</div>`;
-    for (const c of comidasVisibles()) {
-      const actual = menu[`${d}|${c.id}`];
-      h += `<label class="linea-menu"><span>${c.nombre}</span>
-        <select data-acc="menu" data-dia="${d}" data-comida="${c.id}" aria-label="${c.nombre} del ${DIAS[d].toLowerCase()}">
-          <option value="">—</option>
-          ${recetas.map((r) => `<option value="${esc(r.id)}" ${r.id === actual ? 'selected' : ''}>${esc(r.nombre)}</option>`).join('')}
-        </select></label>`;
-    }
-    h += '</div></section>';
+      <div class="bloque-cab"><h2>${DIAS[d]}</h2>${d === hoy ? '<span class="etq auto">hoy</span>' : ''}</div>
+      ${comidasVisibles().map((c) => bloqueComida(d, c, recetas, ver)).join('')}
+    </div></section>`;
   }
   return h;
 }
@@ -346,6 +410,11 @@ function vistaAjustes() {
         ${TIENDAS.map((t) => `<label class="linea"><span>${punto(t.id)} ${t.nombre}</span>
           <input class="redonda" type="checkbox" data-acc="tienda" data-id="${t.id}" ${ajustes.tiendas.includes(t.id) ? 'checked' : ''}></label>`).join('')}
         <p class="suave">Marca solo las que os queden cerca. Halal es la carnicería: solo se usa para los ingredientes marcados como «Carne», y para ellos sustituye a Dia.</p></div>
+      <div class="ajuste"><strong>Quiénes sois</strong>
+        ${[0, 1].map((i) => `<label class="linea"><span>Persona ${i + 1}</span>
+          <input class="nombre-p" type="text" data-acc="nombresP" data-i="${i}" value="${esc(nombresP()[i])}" aria-label="Nombre de la persona ${i + 1}" autocomplete="off"></label>`).join('')}
+        <p class="suave">Para el menú por persona. Este móvil es de:</p>
+        <div class="segmentos">${['p1', 'p2'].map((q) => `<button data-acc="soyYo" data-q="${q}" aria-pressed="${ui.yo === q}">${esc(nombreP(q))}</button>`).join('')}</div></div>
       <div class="ajuste"><label class="linea"><strong>Ahorro mínimo por tienda</strong>
         <input class="corto" type="text" inputmode="decimal" data-acc="ahorro" value="${String(ajustes.ahorroMin).replace('.', ',')}" aria-label="Ahorro mínimo en euros"></label>
         <p class="suave">Si ir a una tienda ahorra menos de estos euros, esos productos pasan a otra tienda. Pon 0 para desactivarlo.</p></div>
@@ -408,12 +477,62 @@ function abrirCandidatos(ingId, t) {
   hoja.showModal();
 }
 
+// Hoja «Nuevo ingrediente»: nombre, tipo y el precio de cada tienda, todo de una vez.
+function abrirNuevoIng() {
+  ui.ni = { nombre: '', peso: false, carne: false, precios: {} };
+  ui.hoja = 'nuevo';
+  hoja.innerHTML = `<div class="hoja-int">
+    <div class="hoja-cab"><h2>Nuevo ingrediente</h2><button class="icono" data-acc="cerrar" aria-label="Cerrar">✕</button></div>
+    <input type="text" id="niNombre" data-acc="niNombre" placeholder="Nombre, p. ej. kiwi" autocomplete="off">
+    <div class="interruptores izq">
+      <label class="interruptor"><input type="checkbox" data-acc="niCarne"> Carne</label>
+      <label class="interruptor"><input type="checkbox" data-acc="niPeso"> Al peso</label></div>
+    <div class="hoja-lista"><p class="suave" id="niAyuda"></p><div id="niTiendas"></div></div>
+    <div class="hoja-pie"><button data-acc="cerrar">Cancelar</button><button class="primario" data-acc="crearIng">Crear ingrediente</button></div></div>`;
+  pintarNi();
+  hoja.showModal();
+  $('#niNombre').focus();
+}
+
+function pintarNi() {
+  const ni = ui.ni;
+  const cont = $('#niTiendas');
+  if (!ni || !cont) return;
+  const u = ni.peso ? '€/kg' : '€';
+  $('#niAyuda').textContent = `Los precios son opcionales y se pueden anotar después. ${ni.peso ? 'Al peso: el precio es por kilo. ' : ''}${ni.carne ? 'La carne se compra en Halal, no en Dia.' : ''}`;
+  cont.innerHTML = tiendasDe({ carne: ni.carne }, TIENDAS.map((x) => x.id)).map((t) => `<div class="rec-fila ni-fila">
+      <span class="n">${punto(t)}${nombreTienda(t)}</span>
+      <span class="campo-precio"><input type="text" inputmode="decimal" autocomplete="off" data-acc="niPrecio" data-t="${t}" value="${esc(ni.precios[t] ?? '')}"
+        placeholder="0,00" aria-label="Precio en ${nombreTienda(t)}"><span class="u">${u}</span></span></div>`).join('');
+}
+
+// Hoja «Editar producto»: nombre del producto de la tienda y su precio.
+function abrirEditarProducto(id, t) {
+  const ing = ingrediente(id);
+  const e = store.estado.elecciones[`${id}|${t}`];
+  const peso = ing.modo === 'peso';
+  ui.ep = { id, t };
+  ui.hoja = 'producto';
+  hoja.innerHTML = `<div class="hoja-int">
+    <div class="hoja-cab"><div><h2>${esc(ing.nombre)}</h2><div class="suave">${nombreTienda(t)}</div></div>
+      <button class="icono" data-acc="cerrar" aria-label="Cerrar">✕</button></div>
+    <label class="campo">Producto <span class="suave">(opcional, p. ej. «Leche Hacendado»)</span>
+      <input type="text" id="epNombre" value="${esc(e?.nombre || '')}" autocomplete="off"></label>
+    <label class="campo">Precio <span class="suave">(${peso ? '€ por kilo' : '€'})</span>
+      <input type="text" id="epPrecio" inputmode="decimal" placeholder="0,00" value="${e?.precio != null ? Number(e.precio).toFixed(2).replace('.', ',') : ''}" autocomplete="off"></label>
+    ${e?.origen === 'auto' ? '<p class="suave">Este precio se actualiza solo cada día. Si lo cambias a mano, dejará de actualizarse.</p>' : ''}
+    <div class="hoja-pie"><button data-acc="cerrar">Cancelar</button><button class="primario" data-acc="guardarProducto">Guardar</button></div></div>`;
+  hoja.showModal();
+  $('#epPrecio').focus();
+}
+
 // Editor de recetas: se trabaja sobre un borrador (ui.receta) y se guarda al pulsar «Guardar».
 function abrirReceta(id) {
   const r = id ? store.estado.recetas[id] : null;
   ui.receta = {
     id: r?.id || null,
     nombre: r?.nombre || '',
+    personas: r?.personas === 1 ? 1 : 2,
     items: Object.fromEntries((r?.ingredientes || []).map((x) => [x.ingrediente_id, Number(x.cantidad)])),
   };
   ui.buscarRec = '';
@@ -421,6 +540,7 @@ function abrirReceta(id) {
   hoja.innerHTML = `<div class="hoja-int">
     <div class="hoja-cab"><h2>${r ? 'Editar receta' : 'Nueva receta'}</h2><button class="icono" data-acc="cerrar" aria-label="Cerrar">✕</button></div>
     <input type="text" id="recNombre" data-acc="recNombre" placeholder="Nombre, p. ej. Pollo al curry" value="${esc(ui.receta.nombre)}" autocomplete="off">
+    <div class="segmentos" id="recPers" role="group" aria-label="Para cuántas personas es la receta"></div>
     <div class="hoja-lista">
       <div id="recItems"></div>
       <h3 class="sub-h">Añadir ingredientes</h3>
@@ -438,6 +558,8 @@ function pintarReceta() {
   const items = $('#recItems');
   const res = $('#recRes');
   if (!items || !ui.receta) return;
+  $('#recPers').innerHTML = [[2, 'Para 2 personas'], [1, 'Para 1 persona']]
+    .map(([n, txt]) => `<button data-acc="recPersonas" data-n="${n}" aria-pressed="${ui.receta.personas === n}">${txt}</button>`).join('');
   const borr = ui.receta.items;
   const elegidos = Object.keys(borr).map(ingrediente).filter(Boolean).sort(porNombre);
   items.innerHTML = elegidos.length
@@ -471,17 +593,6 @@ function cambiarCantReceta(id, sentido) {
   pintarReceta();
 }
 
-// Suma los ingredientes de varias recetas: { ingrediente_id: cantidad }
-function totalRecetas(ids) {
-  const total = {};
-  for (const rid of ids) {
-    for (const x of store.estado.recetas[rid]?.ingredientes || []) {
-      total[x.ingrediente_id] = (total[x.ingrediente_id] || 0) + Number(x.cantidad);
-    }
-  }
-  return total;
-}
-
 // Mensaje breve abajo de la pantalla.
 let temporizadorAviso;
 function avisar(texto) {
@@ -500,7 +611,7 @@ function avisar(texto) {
 // Selector que vuelve a encontrar un campo tras repintar (para no perder el foco al escribir).
 function selectorDe(el) {
   const d = el.dataset;
-  return ['acc', 'id', 't', 'dia', 'comida'].filter((k) => d[k] != null)
+  return ['acc', 'id', 't', 'dia', 'comida', 'quien', 'i'].filter((k) => d[k] != null)
     .map((k) => `[data-${k}="${CSS.escape(d[k])}"]`).join('');
 }
 
@@ -545,8 +656,11 @@ async function accion(fn) {
 }
 
 // Tocar fuera cierra la hoja, salvo en el editor de recetas (para no perder lo escrito sin querer).
-hoja.addEventListener('click', (ev) => { if (ev.target === hoja && ui.hoja !== 'receta') hoja.close(); });
-hoja.addEventListener('close', () => { ui.hoja = null; ui.receta = null; });
+hoja.addEventListener('click', (ev) => { if (ev.target === hoja && !['receta', 'nuevo'].includes(ui.hoja)) hoja.close(); });
+hoja.addEventListener('close', () => {
+  if (hoja.open) return; // evento tardío de una hoja anterior: ya se ha abierto otra y no hay que borrar su estado
+  ui.hoja = null; ui.receta = null; ui.ni = null; ui.ep = null;
+});
 
 document.addEventListener('click', (ev) => {
   const b = ev.target.closest('[data-acc], #pestanas button');
@@ -581,16 +695,88 @@ document.addEventListener('click', (ev) => {
       return accion(async () => {
         for (const [k, v] of Object.entries(lista)) if (v.hecho) await store.setLista(k, null);
       });
-    case 'modoPrecios': ui.preciosModo = b.dataset.modo; return render();
-    case 'nuevoIng': {
-      const nombre = prompt('Nombre del ingrediente nuevo (después puedes marcar «Al peso» y anotar sus precios):');
-      if (!nombre || !nombre.trim()) return;
+    case 'vaciarLista': {
+      const n = Object.keys(lista).length;
+      if (!n) return avisar('La lista ya está vacía');
+      if (!confirm(`Se quitarán los ${n} ${n === 1 ? 'producto' : 'productos'} de la lista, también en el móvil del otro. ¿Seguro?`)) return;
       return accion(async () => {
-        await store.crearIngrediente(nombre, 'unidad');
-        ui.buscarProd = nombre.trim();
-        render();
+        await store.vaciarLista();
+        avisar('Lista vaciada');
       });
     }
+    case 'modoPrecios': ui.preciosModo = b.dataset.modo; return render();
+    case 'nuevoIng': return abrirNuevoIng();
+    case 'crearIng': {
+      const ni = ui.ni;
+      const nombre = ni.nombre.trim().replace(/\s+/g, ' ');
+      if (!nombre) { $('#niNombre').focus(); return alert('Escribe el nombre del ingrediente.'); }
+      if (store.estado.ingredientes.some((i) => i.nombre.toLowerCase() === nombre.toLowerCase())) {
+        return alert(`Ya existe «${nombre}». Búscalo en la lista de Productos.`);
+      }
+      const precios = {};
+      for (const [tienda, texto] of Object.entries(ni.precios)) {
+        if (!String(texto).trim()) continue;
+        const v = aNumero(texto);
+        if (!Number.isFinite(v) || v < 0) return alert(`El precio de ${nombreTienda(tienda)} no es válido. Escribe algo como 2,50.`);
+        precios[tienda] = v;
+      }
+      const permitidas = new Set(tiendasDe({ carne: ni.carne }, TIENDAS.map((x) => x.id)));
+      return accion(async () => {
+        const nuevo = await store.crearIngrediente(nombre, ni.peso ? 'peso' : 'unidad', ni.carne);
+        for (const [tienda, v] of Object.entries(precios)) {
+          if (!permitidas.has(tienda)) continue; // por si se cambió Carne después de escribir un precio
+          await store.setEleccion(nuevo, tienda, { precio: v, precio_unidad: null, unidad: null, origen: 'manual' });
+        }
+        hoja.close();
+        ui.buscarProd = nombre;
+        render();
+        avisar(`«${nombre}» creado`);
+      });
+    }
+    case 'guardarProducto': {
+      const { id: ingId, t: tienda } = ui.ep;
+      const actual = elecciones[`${ingId}|${tienda}`];
+      let nombre = $('#epNombre').value.trim();
+      let textoPrecio = $('#epPrecio').value.trim();
+      // Si en el nombre se ha escrito un número, casi seguro es el precio.
+      if (nombre && !textoPrecio && /^\d+([.,]\d+)?\s*€?$/.test(nombre)) {
+        if (confirm(`Has escrito «${nombre}» como nombre del producto. ¿Es el precio?`)) {
+          textoPrecio = nombre.replace('€', '').trim();
+          nombre = '';
+        }
+      }
+      const precio = textoPrecio === '' ? null : aNumero(textoPrecio);
+      if (precio !== null && (!Number.isFinite(precio) || precio < 0)) return alert('Escribe un precio válido, por ejemplo 2,50.');
+      const cambios = {};
+      const nombreAntes = actual?.nombre || '';
+      if (nombre !== nombreAntes) cambios.nombre = nombre || null;
+      const precioAntes = actual?.precio != null ? Number(actual.precio) : null;
+      if (precio !== precioAntes) Object.assign(cambios, { precio, precio_unidad: null, unidad: null });
+      if (!Object.keys(cambios).length) return hoja.close();
+      // Tocar a mano un producto que se actualizaba solo lo pasa a manual (si no, el siguiente reparto lo pisaría).
+      cambios.origen = actual?.origen === 'auto' ? 'manual' : actual?.origen || 'manual';
+      hoja.close();
+      return accion(() => store.setEleccion(ingId, tienda, cambios));
+    }
+    case 'soyYo':
+      ui.yo = b.dataset.q;
+      guardarYo(ui.yo);
+      return render();
+    case 'verMenu': ui.menuVer = b.dataset.ver; return render();
+    case 'modoComida': {
+      const dia = Number(b.dataset.dia);
+      const comida = b.dataset.comida;
+      const separar = b.dataset.sep === '1';
+      if (separar === esSeparada(dia, comida)) return;
+      const { menu } = store.estado;
+      const a = menu[`${dia}|${comida}|p1`];
+      const c = menu[`${dia}|${comida}|p2`];
+      if (!separar && (a || c) && a !== c && !confirm('Si coméis juntos se quitan las dos recetas separadas de esta comida. ¿Seguir?')) return;
+      return accion(() => store.setModoComida(dia, comida, separar));
+    }
+    case 'recPersonas':
+      ui.receta.personas = Number(b.dataset.n) === 1 ? 1 : 2;
+      return pintarReceta();
     case 'nuevaReceta': return abrirReceta(null);
     case 'editarReceta': return abrirReceta(id);
     case 'recAdd':
@@ -634,7 +820,7 @@ document.addEventListener('click', (ev) => {
       const ingredientes = Object.entries(r.items).map(([ingrediente_id, cantidad]) => ({ ingrediente_id, cantidad }));
       if (!ingredientes.length) return alert('Añade al menos un ingrediente.');
       return accion(async () => {
-        await store.guardarReceta({ id: r.id, nombre, ingredientes });
+        await store.guardarReceta({ id: r.id, nombre, personas: r.personas, ingredientes });
         hoja.close();
         avisar(r.id ? 'Receta guardada' : `Receta «${nombre}» creada`);
       });
@@ -652,16 +838,16 @@ document.addEventListener('click', (ev) => {
     case 'recetaALista': {
       const r = store.estado.recetas[id];
       return accion(async () => {
-        await store.sumarLista(totalRecetas([id]));
+        await store.sumarLista(sumarRecetas([{ receta_id: id, factor: 1 }], store.estado.recetas, store.estado.ingredientes));
         avisar(`Ingredientes de «${r.nombre}» añadidos a la lista`);
       });
     }
     case 'menuALista': {
       const huecos = huecosMenu();
-      const total = totalRecetas(huecos.map(([, rid]) => rid));
+      const total = sumarRecetas(huecos, store.estado.recetas, store.estado.ingredientes);
       const n = Object.keys(total).length;
       if (!n) return;
-      if (!confirm(`Se añadirán ${n} ${n === 1 ? 'ingrediente' : 'ingredientes'} de ${huecos.length} ${huecos.length === 1 ? 'comida' : 'comidas'} a la lista. Lo que ya esté en la lista se suma. ¿Seguir?`)) return;
+      if (!confirm(`Se añadirán ${n} ${n === 1 ? 'ingrediente' : 'ingredientes'} de ${huecos.length} ${huecos.length === 1 ? 'plato' : 'platos'} del menú a la lista. Lo que ya esté en la lista se suma. ¿Seguir?`)) return;
       return accion(async () => {
         await store.sumarLista(total);
         irA('lista');
@@ -683,12 +869,7 @@ document.addEventListener('click', (ev) => {
         precio_unidad: c.precio_unidad, unidad: c.unidad, origen: 'auto',
       }));
     }
-    case 'nombre': {
-      const actual = elecciones[`${id}|${t}`];
-      const nuevo = prompt(`Producto de ${ingrediente(id).nombre} en ${nombreTienda(t)}:`, actual?.nombre || '');
-      if (nuevo === null) return;
-      return accion(() => store.setEleccion(id, t, { nombre: nuevo.trim() || null, origen: actual?.origen === 'auto' ? 'manual' : actual?.origen || 'manual' }));
-    }
+    case 'nombre': return abrirEditarProducto(id, t);
     case 'exportar': {
       const url = URL.createObjectURL(new Blob([store.exportar()], { type: 'application/json' }));
       const a = Object.assign(document.createElement('a'), { href: url, download: `compra-copia-${new Date().toISOString().slice(0, 10)}.json` });
@@ -758,7 +939,19 @@ document.addEventListener('change', (ev) => {
         if (lista[id]) await store.setLista(id, { cantidad: aPeso ? 0.5 : 1 });
       });
     }
-    case 'menu': return accion(() => store.setMenu(Number(el.dataset.dia), el.dataset.comida, el.value || null));
+    case 'menu': return accion(() => store.setMenu(Number(el.dataset.dia), el.dataset.comida, el.dataset.quien, el.value || null));
+    case 'nombresP': {
+      const i = Number(el.dataset.i);
+      const nombres = nombresP();
+      nombres[i] = el.value.trim().replace(/\s+/g, ' ') || `Persona ${i + 1}`;
+      return accion(() => store.setAjuste('nombres', nombres));
+    }
+    case 'niCarne':
+      ui.ni.carne = el.checked;
+      return pintarNi();
+    case 'niPeso':
+      ui.ni.peso = el.checked;
+      return pintarNi();
     case 'desayuno': return accion(() => store.setAjuste('desayuno', el.checked));
     case 'tienda': {
       const nuevas = TIENDAS.map((x) => x.id).filter((x) => (x === id ? el.checked : ajustes.tiendas.includes(x)));
@@ -789,6 +982,14 @@ document.addEventListener('input', (ev) => {
   if (el.dataset.acc === 'buscarAdd') {
     ui.buscarAdd = el.value;
     return pintarAdd();
+  }
+  if (el.dataset.acc === 'niNombre') {
+    ui.ni.nombre = el.value;
+    return;
+  }
+  if (el.dataset.acc === 'niPrecio') {
+    ui.ni.precios[el.dataset.t] = el.value;
+    return;
   }
   if (el.dataset.acc === 'buscarRec') {
     ui.buscarRec = el.value;

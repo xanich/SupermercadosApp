@@ -61,9 +61,13 @@ create table if not exists ajustes (
 
 -- Recetas: solo un nombre y sus ingredientes con la cantidad que se compra.
 create table if not exists recetas (
-  id      text primary key,
-  nombre  text not null
+  id        text primary key,
+  nombre    text not null,
+  personas  smallint not null default 2 check (personas in (1, 2))  -- para cuantas personas es la cantidad
 );
+alter table recetas add column if not exists personas smallint not null default 2;
+alter table recetas drop constraint if exists recetas_personas_check;
+alter table recetas add constraint recetas_personas_check check (personas in (1, 2));
 
 create table if not exists receta_ingredientes (
   receta_id      text not null references recetas(id) on delete cascade,
@@ -72,13 +76,25 @@ create table if not exists receta_ingredientes (
   primary key (receta_id, ingrediente_id)
 );
 
--- Menu semanal: una receta por hueco. dia 0 = lunes ... 6 = domingo.
+-- Menu semanal. dia 0 = lunes ... 6 = domingo.
+-- quien: 'ambos' = una receta para los dos; 'p1' / 'p2' = cada persona la suya (comida "separada").
+-- receta_id puede ser nulo: un hueco separado que aun no tiene receta.
 create table if not exists menu (
   dia        smallint not null check (dia between 0 and 6),
   comida     text not null check (comida in ('desayuno','comida','cena')),
-  receta_id  text not null references recetas(id) on delete cascade,
-  primary key (dia, comida)
+  quien      text not null default 'ambos' check (quien in ('ambos','p1','p2')),
+  receta_id  text references recetas(id) on delete set null,
+  primary key (dia, comida, quien)
 );
+-- Bases creadas antes de existir "quien": se adapta la tabla (los huecos que habia pasan a 'ambos').
+alter table menu add column if not exists quien text not null default 'ambos';
+alter table menu drop constraint if exists menu_quien_check;
+alter table menu add constraint menu_quien_check check (quien in ('ambos','p1','p2'));
+alter table menu drop constraint if exists menu_pkey;
+alter table menu add primary key (dia, comida, quien);
+alter table menu alter column receta_id drop not null;
+alter table menu drop constraint if exists menu_receta_id_fkey;
+alter table menu add constraint menu_receta_id_fkey foreign key (receta_id) references recetas(id) on delete set null;
 
 alter table ingredientes enable row level security;
 alter table elecciones   enable row level security;

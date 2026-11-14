@@ -261,6 +261,24 @@ select {
   appearance: none; -webkit-appearance: none; font-size: 16px; text-overflow: ellipsis;
 }
 
+/* menú por persona, hojas de producto y nuevo ingrediente */
+.pie-lista { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
+.comida-menu { padding: 8px 0; border-top: 1px solid var(--linea); }
+.bloque-cab + .comida-menu { border-top: 0; }
+.cm-cab { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+.segmentos.mini { margin: 0; flex: none; }
+.segmentos.mini button { flex: none; min-height: 32px; padding: 0 12px; font-size: 0.82rem; }
+.otro-menu { margin: 2px 0 0; }
+.nota-menu { margin: -6px 0 12px; }
+.quien { display: flex; gap: 8px; margin-top: 4px; }
+.quien button { flex: 1; }
+.campo { display: block; margin-bottom: 4px; font-weight: 550; }
+.campo input { display: block; margin-top: 6px; font-size: 16px; font-weight: 400; }
+.interruptores.izq { justify-content: flex-start; }
+.ni-fila { grid-template-columns: 1fr auto; }
+.ni-fila .n { display: flex; align-items: center; gap: 8px; }
+.ajuste input.nombre-p { width: 160px; text-align: right; }
+
 #toast {
   position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom)); transform: translate(-50%, 20px);
   max-width: calc(100% - 32px); padding: 10px 16px; border-radius: 12px; background: var(--texto); color: var(--fondo);

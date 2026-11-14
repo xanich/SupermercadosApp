@@ -103,6 +103,34 @@ export function asignar(items, elecciones, tiendas, ahorroMin = 0) {
   return { porTienda, sinPrecio: r.sin, total, unica };
 }
 
+/**
+ * Cuanto de una receta hay que comprar para un hueco del menú.
+ * La cantidad escrita en la receta es para `personas` (1 o 2). Si comen los dos juntos ('ambos') hacen
+ * falta 2 raciones; si cada uno come la suya ('p1' / 'p2'), 1 ración.
+ * Receta para 2: juntos ×1, separados ×0,5. Receta para 1: juntos ×2, separados ×1.
+ */
+export const factorMenu = (personas, quien) => (quien === 'ambos' ? 2 : 1) / (Number(personas) === 1 ? 1 : 2);
+
+/**
+ * Suma los ingredientes de varias recetas.
+ * partes: [{ receta_id, factor }] · recetas: { id: { ingredientes: [{ingrediente_id, cantidad}] } }
+ * ingredientes: [{ id, modo }] → { ingrediente_id: cantidad }
+ * Los productos por unidades se redondean hacia arriba (no se compra media lata); los de peso, a gramos.
+ */
+export function sumarRecetas(partes, recetas, ingredientes) {
+  const modo = Object.fromEntries(ingredientes.map((i) => [i.id, i.modo]));
+  const total = {};
+  for (const { receta_id, factor } of partes) {
+    for (const x of recetas[receta_id]?.ingredientes || []) {
+      total[x.ingrediente_id] = (total[x.ingrediente_id] || 0) + Number(x.cantidad) * factor;
+    }
+  }
+  for (const [id, n] of Object.entries(total)) {
+    total[id] = modo[id] === 'peso' ? Math.round(n * 1000) / 1000 : Math.ceil(n - 1e-9);
+  }
+  return total;
+}
+
 export function diasDesde(iso, ahora = Date.now()) {
   if (!iso) return null;
   return Math.floor((ahora - new Date(iso).getTime()) / 86400000);
