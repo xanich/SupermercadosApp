@@ -1,6 +1,6 @@
 import { config } from './config.js';
 import { crearStoreLocal, crearStoreSupabase } from './store.js';
-import { TIENDAS, nombreTienda, asignar, tiendasDe, factorMenu, sumarRecetas, diasDesde, esAntiguo } from './compare.js';
+import { TIENDAS, nombreTienda, asignar, tiendasDe, factorMenu, sumarRecetas, costeReceta, diasDesde, esAntiguo } from './compare.js';
 
 const $ = (s) => document.querySelector(s);
 const vista = $('#vista');
@@ -31,10 +31,11 @@ const COMIDAS = [
   { id: 'cena', nombre: 'Cena' },
 ];
 const MODOS_PRECIO = [
-  { id: 'antiguos', nombre: 'Antiguos' },
   { id: 'lista', nombre: 'Lista' },
   { id: 'todos', nombre: 'Todos' },
+  { id: 'receta', nombre: 'Receta' },
 ];
+const INICIALES = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
 
 // Quién usa este móvil ('p1' / 'p2'): se recuerda en el propio móvil, no se comparte.
 const CLAVE_YO = 'super-yo';
@@ -57,7 +58,7 @@ const guardarYo = (v) => {
 
 let store;
 const ui = {
-  tab: 'lista', buscarProd: '', buscarAdd: '', buscarPrecio: '', preciosModo: 'antiguos',
+  tab: 'lista', buscarProd: '', buscarAdd: '', buscarPrecio: '', preciosModo: 'lista', preciosReceta: null, pasados: new Set(), // pasados: días ya pasados a la lista (solo en este móvil)
   hoja: null, candidato: null, receta: null, buscarRec: '',
   yo: leerYo(), menuVer: 'mio', ni: null, ep: null,
 };
@@ -139,7 +140,7 @@ function vistaLista() {
 
   if (antiguos > 0) {
     h += `<div class="aviso"><span>${antiguos} ${antiguos === 1 ? 'precio sin actualizar' : 'precios sin actualizar'}</span>
-      <button data-acc="ir" data-tab="precios">Actualizar</button></div>`;
+      <button data-acc="ir" data-tab="precios" data-modo="lista">Actualizar</button></div>`;
   }
 
   for (const p of r.porTienda) {
@@ -188,6 +189,33 @@ function edadCorta(e) {
   return d <= 0 ? 'hoy' : `${d} d`;
 }
 
+// Tarjeta con lo que cuesta la receta (cantidades tal como están escritas) en cada tienda y repartiendo.
+function resumenCosteReceta(receta, items) {
+  const { elecciones, ajustes } = store.estado;
+  const c = costeReceta(items, elecciones, ajustes.tiendas, Number(ajustes.ahorroMin) || 0);
+  const completas = c.porTienda.filter((x) => x.faltan === 0);
+  const minimo = completas.length ? Math.min(...completas.map((x) => x.total)) : null;
+  const falta = (n) => `faltan ${n} ${n === 1 ? 'precio' : 'precios'}`;
+  const filas = c.porTienda.map((x) => {
+    const sinNada = x.faltan === items.length;
+    const mejor = x.faltan === 0 && x.total === minimo && completas.length > 1;
+    return `<div class="coste-fila${mejor ? ' mejor' : ''}${x.faltan ? ' incompleto' : ''}">
+      <span class="t">${punto(x.t)}${nombreTienda(x.t)}</span>
+      <span class="num coste-imp">${sinNada ? '—' : euro.format(x.total)}</span>
+      <span class="coste-nota">${x.faltan ? falta(x.faltan) : mejor ? 'la más barata' : ''}</span></div>`;
+  }).join('');
+  const r = c.repartido;
+  const ahorro = r.faltan === 0 && minimo != null ? minimo - r.total : 0;
+  const reparto = r.faltan
+    ? `<span class="suave">${falta(r.faltan)}</span>`
+    : `<strong class="num">${euro.format(r.total)}</strong>${ahorro > 0.005 ? ` <span class="suave">· ahorras ${euro.format(ahorro)} frente a la más barata</span>` : ''}`;
+  return `<section class="tarjeta coste"><div class="bloque">
+    <div class="bloque-cab"><h2>Coste de la receta</h2><span class="suave">para ${receta.personas === 1 ? '1 persona' : '2 personas'}</span></div>
+    ${filas}
+    <div class="coste-reparto"><span>Repartiendo entre tiendas</span><span>${reparto}</span></div>
+  </div></section>`;
+}
+
 function vistaPrecios() {
   const { ingredientes, elecciones, ajustes } = store.estado;
   const dias = Number(ajustes.diasCaducidad) || 7;
@@ -202,29 +230,50 @@ function vistaPrecios() {
   };
   const modo = ui.preciosModo;
   const q = ui.buscarPrecio.trim().toLowerCase();
-  let base = modo === 'todos'
-    ? ingredientes.map((i) => ({ id: i.id, nombre: i.nombre, consulta: i.consulta, modo: i.modo || 'unidad', carne: Boolean(i.carne) }))
-    : itemsLista();
-  if (modo === 'antiguos') base = base.filter((it) => celdasDe(it).some((t) => esAntiguo(elecciones[`${it.id}|${t}`], dias)));
+  const recetas = recetasOrdenadas();
+  // Vista «Receta»: sus ingredientes (con la cantidad de la receta) y lo que cuesta.
+  let receta = null;
+  if (modo === 'receta') {
+    receta = store.estado.recetas[ui.preciosReceta] || recetas[0] || null;
+    ui.preciosReceta = receta?.id ?? null;
+  }
+  const itemsReceta = receta
+    ? receta.ingredientes.flatMap((x) => {
+      const i = ingrediente(x.ingrediente_id);
+      return i ? [{ id: i.id, nombre: i.nombre, consulta: i.consulta, modo: i.modo || 'unidad', carne: Boolean(i.carne), cantidad: Number(x.cantidad) }] : [];
+    })
+    : [];
+  const base = modo === 'receta'
+    ? itemsReceta
+    : modo === 'todos'
+      ? ingredientes.map((i) => ({ id: i.id, nombre: i.nombre, consulta: i.consulta, modo: i.modo || 'unidad', carne: Boolean(i.carne) }))
+      : itemsLista();
   const filas = base.filter((it) => !q || it.nombre.toLowerCase().includes(q)).sort(porNombre);
   const explica = {
-    antiguos: `Lo de tu lista con algún precio de más de ${dias} días.`,
     lista: 'Todo lo que hay en la lista de la compra.',
     todos: 'Todos los ingredientes, estén o no en la lista.',
+    receta: 'Los ingredientes de una receta, sus precios y lo que cuesta.',
   }[modo];
 
   let h = `<div class="cabecera"><div><h1>Precios</h1><p class="suave">${explica}</p></div></div>
     <div class="segmentos" role="group" aria-label="Qué precios ver">${MODOS_PRECIO.map((m) =>
-      `<button data-acc="modoPrecios" data-modo="${m.id}" aria-pressed="${m.id === modo}">${m.nombre}</button>`).join('')}</div>
-    <p><input type="search" id="buscarPrecio" data-acc="buscarPrecio" placeholder="Buscar ingrediente" value="${esc(ui.buscarPrecio)}" autocomplete="off"></p>
+      `<button data-acc="modoPrecios" data-modo="${m.id}" aria-pressed="${m.id === modo}">${m.nombre}</button>`).join('')}</div>`;
+  if (modo === 'receta') {
+    if (!recetas.length) {
+      return h + `<div class="vacio"><h2>Aún no hay recetas</h2><p>Crea una receta y aquí verás sus precios y lo que cuesta.</p>
+        <button class="primario" data-acc="ir" data-tab="recetas">Ir a Recetas</button></div>`;
+    }
+    h += `<p><select data-acc="recetaPrecios" aria-label="Receta">${recetas.map((r) =>
+      `<option value="${esc(r.id)}" ${r.id === receta.id ? 'selected' : ''}>${esc(r.nombre)}</option>`).join('')}</select></p>`;
+  }
+  h += `<p><input type="search" id="buscarPrecio" data-acc="buscarPrecio" placeholder="Buscar ingrediente" value="${esc(ui.buscarPrecio)}" autocomplete="off"></p>
     <p class="suave">Escribe el precio y pasa a la siguiente casilla: se guarda solo. ↗ abre el producto en la web de la tienda. Los productos al peso van en €/kg.</p>`;
-  if (modo !== 'todos' && !itemsLista().length) {
+  if (receta && itemsReceta.length) h += resumenCosteReceta(receta, itemsReceta);
+  if (modo === 'lista' && !itemsLista().length) {
     return h + `<div class="vacio"><p>La lista está vacía.</p><button data-acc="modoPrecios" data-modo="todos">Ver todos los ingredientes</button></div>`;
   }
   if (!filas.length) {
-    if (q) return h + '<div class="vacio"><p>Sin resultados.</p></div>';
-    return h + `<div class="vacio"><h2>Todo al día</h2><p>Los precios de tu lista están actualizados.</p>
-      <button data-acc="modoPrecios" data-modo="todos">Ver todos los ingredientes</button></div>`;
+    return h + `<div class="vacio"><p>${q ? 'Sin resultados.' : 'No hay ingredientes que mostrar.'}</p></div>`;
   }
 
   const cols = Math.max(cab.length, ...filas.map((it) => celdasDe(it).length));
@@ -234,7 +283,8 @@ function vistaPrecios() {
     const celdas = celdasDe(it);
     // Si las tiendas de la fila no coinciden con las columnas (carne: Halal en lugar de Dia), cada casilla dice cuál es.
     const rotular = celdas.some((t, i) => t !== cab[i]);
-    h += `<div class="tp-fila"><div class="tp-nombre">${esc(it.nombre)}${it.modo === 'peso' ? ' <span class="etq">€/kg</span>' : ''}</div><div class="tp-celdas">`;
+    const cant = modo === 'receta' ? ` <span class="tp-cant">${fmtCantidad(it.modo, it.cantidad)}</span>` : '';
+    h += `<div class="tp-fila"><div class="tp-nombre">${esc(it.nombre)}${it.modo === 'peso' ? ' <span class="etq">€/kg</span>' : ''}${cant}</div><div class="tp-celdas">`;
     for (const t of celdas) {
       const e = elecciones[`${it.id}|${t}`];
       const enlace = enlaceTienda(t, it.consulta, e);
@@ -372,7 +422,8 @@ function vistaMenu() {
   const { menu } = store.estado;
   const recetas = recetasOrdenadas();
   const hoy = (new Date().getDay() + 6) % 7;
-  const n = huecosMenu().length;
+  const todos = huecosMenu();
+  const n = todos.length;
   const ver = ui.yo ? ui.menuVer : 'todos';
   let h = `<div class="cabecera"><div><h1>Menú</h1><p class="suave">${n ? `${n} ${n === 1 ? 'plato planificado' : 'platos planificados'}` : 'Elige una receta para cada comida'}</p></div>
     <label class="interruptor"><input type="checkbox" data-acc="desayuno" ${conDesayuno() ? 'checked' : ''}> Desayuno</label></div>${avisoTablas()}`;
@@ -389,14 +440,17 @@ function vistaMenu() {
     return h + `<div class="vacio"><h2>Primero, las recetas</h2><p>Crea alguna receta y después elígela aquí para cada día.</p>
       <button class="primario" data-acc="ir" data-tab="recetas">Ir a Recetas</button></div>`;
   }
-  h += `<div class="acciones-menu"><button class="primario" data-acc="menuALista" ${n ? '' : 'disabled'}>Pasar a la lista</button>
+  h += `<div class="acciones-menu"><button class="primario" data-acc="menuALista" ${n ? '' : 'disabled'}>Pasar todo</button>
     <button data-acc="vaciarMenu" ${Object.keys(menu).length ? '' : 'disabled'}>Vaciar semana</button></div>
-    <p class="suave nota-menu">«Pasar a la lista» suma el menú de los dos, lo veas como lo veas.</p>`;
+    <p class="suave nota-menu">«Pasar todo» y «Pasar a la lista» suman el menú de los dos, lo veas como lo veas.</p>`;
   for (let d = 0; d < 7; d++) {
-    h += `<section class="tarjeta${d === hoy ? ' hoy' : ''}"><div class="bloque">
-      <div class="bloque-cab"><h2>${DIAS[d]}</h2>${d === hoy ? '<span class="etq auto">hoy</span>' : ''}</div>
-      ${comidasVisibles().map((c) => bloqueComida(d, c, recetas, ver)).join('')}
-    </div></section>`;
+    const nDia = todos.filter((x) => Number(x.dia) === d).length;
+    const pasado = ui.pasados.has(d);
+    h += `<section class="tarjeta dia${d === hoy ? ' hoy' : ''}${d >= 5 ? ' finde' : ''}">
+      <header class="dia-cab"><span class="dia-ini" aria-hidden="true">${INICIALES[d]}</span>
+        <h2>${DIAS[d]}</h2>${d === hoy ? '<span class="etq-hoy">Hoy</span>' : ''}
+        <button class="mini dia-pasar${pasado ? ' hecho' : ''}" data-acc="diaALista" data-dia="${d}" ${nDia ? '' : 'disabled'}>${pasado ? 'Pasado ✓' : 'Pasar a la lista'}</button></header>
+      <div class="bloque">${comidasVisibles().map((c) => bloqueComida(d, c, recetas, ver)).join('')}</div></section>`;
   }
   return h;
 }
@@ -669,7 +723,9 @@ document.addEventListener('click', (ev) => {
   const { acc, id, t } = b.dataset;
   const { lista, elecciones } = store.estado;
   switch (acc) {
-    case 'ir': return irA(b.dataset.tab);
+    case 'ir':
+      if (b.dataset.modo) ui.preciosModo = b.dataset.modo;
+      return irA(b.dataset.tab);
     case 'abrirAdd': return abrirAdd();
     case 'cerrar': return hoja.close();
     case 'toggleAdd': return accion(() => store.setLista(id, lista[id] ? null : { cantidad: cantidadInicial(id) }));
@@ -772,6 +828,7 @@ document.addEventListener('click', (ev) => {
       const a = menu[`${dia}|${comida}|p1`];
       const c = menu[`${dia}|${comida}|p2`];
       if (!separar && (a || c) && a !== c && !confirm('Si coméis juntos se quitan las dos recetas separadas de esta comida. ¿Seguir?')) return;
+      ui.pasados.delete(dia);
       return accion(() => store.setModoComida(dia, comida, separar));
     }
     case 'recPersonas':
@@ -850,12 +907,27 @@ document.addEventListener('click', (ev) => {
       if (!confirm(`Se añadirán ${n} ${n === 1 ? 'ingrediente' : 'ingredientes'} de ${huecos.length} ${huecos.length === 1 ? 'plato' : 'platos'} del menú a la lista. Lo que ya esté en la lista se suma. ¿Seguir?`)) return;
       return accion(async () => {
         await store.sumarLista(total);
+        huecos.forEach((x) => ui.pasados.add(Number(x.dia)));
         irA('lista');
         avisar('Menú pasado a la lista');
       });
     }
+    case 'diaALista': {
+      const d = Number(b.dataset.dia);
+      const huecos = huecosMenu().filter((x) => Number(x.dia) === d);
+      const total = sumarRecetas(huecos, store.estado.recetas, store.estado.ingredientes);
+      if (!Object.keys(total).length) return;
+      if (ui.pasados.has(d) && !confirm(`Ya pasaste el ${DIAS[d].toLowerCase()} a la lista. Si sigues, se suma otra vez. ¿Seguir?`)) return;
+      return accion(async () => {
+        await store.sumarLista(total);
+        ui.pasados.add(d);
+        render();
+        avisar(`${DIAS[d]} pasado a la lista`);
+      });
+    }
     case 'vaciarMenu':
       if (!confirm('¿Quitar todas las recetas del menú de la semana? Las recetas no se borran.')) return;
+      ui.pasados.clear();
       return accion(() => store.vaciarMenu());
     case 'elegir': return abrirCandidatos(id, t);
     case 'cand': {
@@ -939,7 +1011,12 @@ document.addEventListener('change', (ev) => {
         if (lista[id]) await store.setLista(id, { cantidad: aPeso ? 0.5 : 1 });
       });
     }
-    case 'menu': return accion(() => store.setMenu(Number(el.dataset.dia), el.dataset.comida, el.dataset.quien, el.value || null));
+    case 'menu':
+      ui.pasados.delete(Number(el.dataset.dia));
+      return accion(() => store.setMenu(Number(el.dataset.dia), el.dataset.comida, el.dataset.quien, el.value || null));
+    case 'recetaPrecios':
+      ui.preciosReceta = el.value;
+      return render();
     case 'nombresP': {
       const i = Number(el.dataset.i);
       const nombres = nombresP();

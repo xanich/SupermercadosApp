@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { asignar, tiendasDe, factorMenu, sumarRecetas } from '../app/compare.js';
+import { asignar, tiendasDe, factorMenu, sumarRecetas, costeReceta } from '../app/compare.js';
 
 const e = (precio, extra = {}) => ({ precio, precio_unidad: null, unidad: null, ...extra });
 const el = {
@@ -79,4 +79,25 @@ t = sumarRecetas([{ receta_id: 'uno', factor: 1 }, { receta_id: 'uno', factor: 1
 assert.equal(t.arroz, 2);
 // Una receta que ya no existe no suma nada
 assert.deepEqual(sumarRecetas([{ receta_id: 'borrada', factor: 1 }], recs, ings), {});
+// 9) Coste de una receta por tienda: pollo (carne, 0,5 kg) + arroz (1 ud) + sal (1 ud).
+const elR = {
+  'pollo|eroski': e(8), 'pollo|halal': e(7), 'pollo|dia': e(1),   // Dia no cuenta para la carne
+  'arroz|eroski': e(2), 'arroz|dia': e(1.5), 'arroz|halal': e(0.1), // Halal no cuenta para el arroz
+  'sal|eroski': e(1),                                              // solo Eroski tiene sal
+};
+const itemsR = [{ id: 'pollo', cantidad: 0.5, carne: true }, { id: 'arroz', cantidad: 1 }, { id: 'sal', cantidad: 1 }];
+let c = costeReceta(itemsR, elR, ['eroski', 'dia', 'halal'], 0);
+const de = (t) => c.porTienda.find((x) => x.t === t);
+assert.deepEqual(c.porTienda.map((x) => x.t), ['eroski', 'dia']); // una columna por cadena; Halal va en la de Dia
+assert.ok(Math.abs(de('eroski').total - (4 + 2 + 1)) < 1e-9);
+assert.equal(de('eroski').faltan, 0);
+// En la columna de Dia: la carne se cuenta en Halal (0,5×7), el arroz en Dia (1,5) y a la sal le falta el precio.
+assert.ok(Math.abs(de('dia').total - (3.5 + 1.5)) < 1e-9);
+assert.equal(de('dia').faltan, 1);
+// Repartido: pollo en Halal (3,5) + arroz en Dia (1,5) + sal en Eroski (1) = 6
+assert.ok(Math.abs(c.repartido.total - 6) < 1e-9);
+assert.equal(c.repartido.faltan, 0);
+// Con Halal desactivada la carne no se puede comprar en la columna de Dia.
+c = costeReceta(itemsR, elR, ['eroski', 'dia'], 0);
+assert.equal(de('dia').faltan, 2); // pollo y sal
 console.log('compare.js: todas las pruebas OK');

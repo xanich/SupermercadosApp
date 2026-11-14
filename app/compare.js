@@ -104,6 +104,29 @@ export function asignar(items, elecciones, tiendas, ahorroMin = 0) {
 }
 
 /**
+ * Cuanto cuesta una receta (sus ingredientes y cantidades tal como están escritas).
+ * items: [{id, cantidad, carne?}] · activas: ids de tiendas activas · ahorroMin: como en asignar().
+ * - porTienda: una entrada por cadena (la carne usa Halal en el sitio de Dia, como en la tabla de precios):
+ *   total de lo que tiene precio y cuántos ingredientes no lo tienen en esa tienda (faltan).
+ * - repartido: lo que cuesta repartiendo entre tiendas con la misma lógica que la lista.
+ */
+export function costeReceta(items, elecciones, activas, ahorroMin = 0) {
+  const porTienda = activas.filter((t) => t !== 'halal').map((slot) => {
+    let total = 0;
+    let faltan = 0;
+    for (const it of items) {
+      const t = it.carne && slot === 'dia' ? 'halal' : slot;
+      const precio = tiendasDe(it, activas).includes(t) ? elecciones[`${it.id}|${t}`]?.precio : null;
+      if (precio == null) faltan++;
+      else total += precio * it.cantidad;
+    }
+    return { t: slot, total, faltan };
+  });
+  const r = asignar(items, elecciones, activas, ahorroMin);
+  return { porTienda, repartido: { total: r.total, faltan: r.sinPrecio.length } };
+}
+
+/**
  * Cuanto de una receta hay que comprar para un hueco del menú.
  * La cantidad escrita en la receta es para `personas` (1 o 2). Si comen los dos juntos ('ambos') hacen
  * falta 2 raciones; si cada uno come la suya ('p1' / 'p2'), 1 ración.

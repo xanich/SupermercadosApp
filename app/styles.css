@@ -291,3 +291,30 @@ select {
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* cabeceras de día del menú */
+.tarjeta.dia { overflow: hidden; }
+.dia-cab { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: color-mix(in srgb, var(--verde) 10%, var(--tarjeta)); border-bottom: 1px solid var(--linea); }
+.tarjeta.dia.finde .dia-cab { background: color-mix(in srgb, var(--aviso) 14%, var(--tarjeta)); }
+.dia-ini { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; font-weight: 700; font-size: 0.95rem; background: var(--elevada); color: var(--verde); border: 1.5px solid color-mix(in srgb, var(--verde) 45%, var(--linea)); }
+.tarjeta.dia.finde .dia-ini { color: var(--aviso); border-color: color-mix(in srgb, var(--aviso) 50%, var(--linea)); }
+.tarjeta.dia.hoy .dia-ini { background: var(--verde); border-color: var(--verde); color: #fff; }
+.dia-cab h2 { margin: 0; font-family: var(--serif); font-size: 1.35rem; line-height: 1.1; }
+.etq-hoy { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--verde); }
+.dia-pasar { margin-left: auto; flex: none; min-height: 34px; padding: 0 12px; font-size: 0.82rem; font-weight: 600; }
+.dia-pasar.hecho { color: var(--verde); border-color: color-mix(in srgb, var(--verde) 45%, var(--linea)); }
+.dia-pasar:disabled { opacity: 0.45; }
+.tarjeta.dia > .bloque { padding-top: 4px; }
+.bloque > .comida-menu:first-child { border-top: 0; }
+
+/* Precios: vista Receta */
+.tp-cant { font-size: 0.78rem; font-weight: 500; color: var(--suave); white-space: nowrap; }
+.tarjeta.coste .bloque-cab h2 { margin: 0; }
+.coste-fila { display: grid; grid-template-columns: 1fr auto; align-items: baseline; column-gap: 12px; padding: 6px 0; border-top: 1px solid var(--linea); }
+.coste-fila .t { font-weight: 550; }
+.coste-imp { font-weight: 700; text-align: right; }
+.coste-nota { grid-column: 1 / -1; font-size: 0.78rem; color: var(--suave); }
+.coste-nota:empty { display: none; }
+.coste-fila.mejor .coste-imp, .coste-fila.mejor .coste-nota { color: var(--verde); }
+.coste-fila.incompleto .coste-nota { color: var(--aviso); }
+.coste-reparto { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 10px 0 2px; border-top: 2px solid var(--linea); font-weight: 600; }

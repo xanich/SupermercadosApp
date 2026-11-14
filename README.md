@@ -67,13 +67,13 @@ Algunos ingredientes se compran por kilos (pollo, salmón, pimientos, patatas...
 
 ## Precios
 
-La pestaña **Precios** tiene tres vistas: **Antiguos** (lo de la lista con algún precio caducado), **Lista** (todo lo de la lista) y **Todos** (todos los ingredientes). Es una tabla con una casilla por tienda: escribe el precio y pasa a la siguiente casilla, se guarda solo. La flecha ↗ abre el producto elegido en la web de la tienda o, si no hay ninguno elegido, la búsqueda.
+La pestaña **Precios** tiene tres vistas: **Lista** (lo que hay en la lista de la compra, la que se abre por defecto), **Todos** (todos los ingredientes) y **Receta** (elige una receta y ves solo sus ingredientes, con su cantidad al lado, y los precios se editan igual). Arriba de la vista Receta aparece lo que cuesta la receta en cada tienda (con «faltan N precios» si hay huecos; la carne cuenta en Halal en la columna de Dia) y lo que costaría repartiendo entre tiendas, con la misma lógica que la lista. Es una tabla con una casilla por tienda: escribe el precio y pasa a la siguiente casilla, se guarda solo. La flecha ↗ abre el producto elegido en la web de la tienda o, si no hay ninguno elegido, la búsqueda.
 
 ## Recetas y menú semanal
 
 - **Recetas:** cada receta es un nombre y sus ingredientes con la cantidad que se compra (unidades, o gramos si va al peso). Cada una indica **para 2 personas** (lo normal) o **para 1**: la cantidad escrita es para ese número de personas. Si falta un ingrediente, se crea desde el propio buscador de la receta o en **Productos → ＋ Nuevo**, donde se anotan también sus precios. Los ingredientes nuevos no tienen candidatos de BM/Eroski hasta volver a ejecutar `node scraper/run.mjs candidatos`; mientras, su precio se anota a mano.
 - **Menú:** comida y cena para cada día de lunes a domingo; el desayuno se puede ocultar con su interruptor. Cada comida es **Juntos** (una receta para los dos) o **Separados** (una receta para cada persona, o ninguna si cada uno se prepara lo suyo). Los nombres de las dos personas se ponen en **Ajustes**, y cada móvil recuerda quién eres (se guarda solo en ese móvil) para abrir tu menú; el interruptor **Los dos** muestra el menú completo, y cualquiera puede cambiar cualquier hueco.
-- **Pasar a la lista:** suma los ingredientes del menú de los dos a la lista (si algo ya estaba, se suman las cantidades; pulsarlo dos veces lo duplica). Receta para 2: juntos se suma entera y separados, la mitad por persona. Receta para 1: juntos se suma dos veces y separados, una por persona. Los productos por unidades se redondean hacia arriba.
+- **Pasar a la lista:** cada día tiene su botón **Pasar a la lista** (solo las recetas de ese día; queda como «Pasado ✓» y pide confirmación si lo repetís, solo en ese móvil), y **Pasar todo** pasa la semana entera. Suman el menú de los dos a la lista (si algo ya estaba, se suman las cantidades). Receta para 2: juntos se suma entera y separados, la mitad por persona. Receta para 1: juntos se suma dos veces y separados, una por persona. Los productos por unidades se redondean hacia arriba.
 - **Vaciar lista:** botón al final de la pantalla Lista; pide confirmación y la vacía también en el móvil del otro.
 - **Supabase:** recetas y menú usan tres tablas nuevas (`recetas`, `receta_ingredientes`, `menu`). Hay que pegar `sql/schema.sql` en el SQL Editor y pulsar **Run**; el menú por persona y «para N personas» añaden columnas a esas tablas, así que conviene volver a ejecutarlo al actualizar; se puede ejecutar varias veces sin problema. Mientras no se haga, la app avisa en esas pestañas y lo demás sigue funcionando.
 
@@ -83,7 +83,7 @@ Dia no tiene carnicería, así que la carne no se compra allí: los ingredientes
 
 ## Cómo reparte la app
 
-Para cada ingrediente elige la tienda activa más barata (por precio por kg/litro cuando todas lo tienen; si no, por precio del envase). Si ir a una tienda ahorra menos que el **ahorro mínimo** de Ajustes, sus productos pasan a otra tienda. Los precios con más días de los configurados aparecen como antiguos y la pestaña **Precios** os pide solo esos.
+Para cada ingrediente elige la tienda activa más barata (por precio por kg/litro cuando todas lo tienen; si no, por precio del envase). Si ir a una tienda ahorra menos que el **ahorro mínimo** de Ajustes, sus productos pasan a otra tienda. Los precios con más días de los configurados aparecen como antiguos (con un aviso en la Lista que lleva a **Precios**).
 
 ## Qué no está probado
 
