@@ -209,6 +209,63 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
 .cand .n { grid-column: 1; overflow-wrap: anywhere; }
 .cand .p { grid-column: 2; grid-row: 1 / span 2; display: flex; align-items: center; gap: 10px; }
 
+/* ------------------------------------------------------------------ precios: selector y tabla */
+.segmentos { display: flex; gap: 4px; padding: 3px; background: var(--linea); border-radius: 12px; margin-bottom: 10px; }
+.segmentos button { flex: 1; min-height: 38px; border: 0; border-radius: 9px; background: transparent; color: var(--suave); font-weight: 600; font-size: 0.92rem; }
+.segmentos button[aria-pressed=true] { background: var(--elevada); color: var(--texto); box-shadow: var(--sombra); }
+
+.tabla-precios { overflow: visible; }
+.tp-cab, .tp-celdas { display: grid; grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr)); gap: 6px; }
+.tp-cab {
+  position: sticky; top: 0; z-index: 2; padding: 10px 12px 8px; background: var(--tarjeta);
+  border-bottom: 1px solid var(--linea); border-radius: 18px 18px 0 0; font-size: 0.78rem; font-weight: 600; color: var(--suave);
+}
+.tp-cab span { display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; overflow: hidden; white-space: nowrap; }
+.tp-cab .punto { width: 8px; height: 8px; }
+.tp-fila { padding: 10px 12px; border-top: 1px solid var(--linea); }
+.tp-fila:first-of-type { border-top: 0; }
+.tp-nombre { font-weight: 550; margin-bottom: 6px; overflow-wrap: anywhere; }
+.tp-celda { min-width: 0; }
+/* 16px como mínimo: así el iPhone no hace zoom al escribir */
+.tp-celda input[type=text] { min-height: 40px; padding: 0 6px; text-align: center; font-size: 16px; border-radius: 10px; }
+.tp-celda.vieja input { border-color: var(--aviso); background: var(--aviso-fondo); }
+.tp-celda.auto input { border-color: color-mix(in srgb, var(--verde) 45%, var(--linea)); }
+.tp-info { display: flex; justify-content: space-between; align-items: center; padding: 2px 4px 0; font-size: 0.72rem; color: var(--suave); }
+.tp-celda.vieja .tp-info span { color: var(--aviso); font-weight: 600; }
+.tp-info a { padding: 2px 4px; font-size: 0.85rem; }
+
+/* ------------------------------------------------------------------ recetas y menú */
+.pie-receta { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.sub-h { font-size: 0.95rem; margin: 14px 0 8px; }
+.rec-fila { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--linea); }
+.rec-fila:first-child { border-top: 0; }
+.rec-fila .n { overflow-wrap: anywhere; font-weight: 550; }
+#buscarRec { margin-bottom: 4px; }
+.add-fila .marca { color: var(--verde); }
+.crear-ing { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; border-top: 1px solid var(--linea); }
+.crear-ing button { text-align: left; color: var(--verde); font-weight: 600; }
+.hoja-pie { display: flex; justify-content: space-between; gap: 10px; }
+.hoja-pie .primario { flex: 1; max-width: 260px; margin-left: auto; }
+
+.acciones-menu { display: flex; gap: 8px; margin-bottom: 14px; }
+.acciones-menu .primario { flex: 1; }
+.tarjeta.hoy { border-color: color-mix(in srgb, var(--verde) 50%, var(--linea)); }
+.linea-menu { display: grid; grid-template-columns: 112px 1fr; gap: 10px; align-items: center; padding: 6px 0; }
+.linea-menu > span { font-weight: 550; font-size: 0.95rem; }
+select {
+  width: 100%; min-width: 0; min-height: 44px; padding: 0 34px 0 12px; border-radius: 12px; border: 1px solid var(--linea);
+  background: var(--elevada) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='m1 1.5 5 5 5-5' fill='none' stroke='%236a7269' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 12px center / 12px 8px;
+  appearance: none; -webkit-appearance: none; font-size: 16px; text-overflow: ellipsis;
+}
+
+#toast {
+  position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom)); transform: translate(-50%, 20px);
+  max-width: calc(100% - 32px); padding: 10px 16px; border-radius: 12px; background: var(--texto); color: var(--fondo);
+  font-size: 0.92rem; font-weight: 600; box-shadow: var(--sombra); opacity: 0; pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease; z-index: 10;
+}
+#toast.ver { opacity: 1; transform: translate(-50%, 0); }
+
 .error { color: var(--error); }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }

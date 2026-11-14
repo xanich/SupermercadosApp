@@ -52,22 +52,55 @@ create table if not exists ajustes (
   valor  jsonb not null
 );
 
+-- Recetas: solo un nombre y sus ingredientes con la cantidad que se compra.
+create table if not exists recetas (
+  id      text primary key,
+  nombre  text not null
+);
+
+create table if not exists receta_ingredientes (
+  receta_id      text not null references recetas(id) on delete cascade,
+  ingrediente_id text not null references ingredientes(id) on delete cascade,
+  cantidad       numeric(8,3) not null default 1,   -- unidades, o kilos si el ingrediente es 'peso'
+  primary key (receta_id, ingrediente_id)
+);
+
+-- Menu semanal: una receta por hueco. dia 0 = lunes ... 6 = domingo.
+create table if not exists menu (
+  dia        smallint not null check (dia between 0 and 6),
+  comida     text not null check (comida in ('desayuno','comida','cena')),
+  receta_id  text not null references recetas(id) on delete cascade,
+  primary key (dia, comida)
+);
+
 alter table ingredientes enable row level security;
 alter table elecciones   enable row level security;
 alter table historial    enable row level security;
 alter table lista        enable row level security;
 alter table ajustes      enable row level security;
+alter table recetas      enable row level security;
+alter table receta_ingredientes enable row level security;
+alter table menu         enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['ingredientes','elecciones','historial','lista','ajustes'] loop
+  foreach t in array array['ingredientes','elecciones','historial','lista','ajustes','recetas','receta_ingredientes','menu'] loop
     execute format('drop policy if exists "solo_autenticados" on %I', t);
     execute format(
       'create policy "solo_autenticados" on %I for all to authenticated using (true) with check (true)', t);
   end loop;
 end $$;
 
--- Para ver los cambios de la lista en tiempo real en los dos moviles.
-alter publication supabase_realtime add table lista;
-alter publication supabase_realtime add table elecciones;
+-- Para ver los cambios en tiempo real en los dos moviles.
+-- (Se puede ejecutar el archivo varias veces: solo añade las tablas que falten.)
+do $$
+declare t text;
+begin
+  foreach t in array array['lista','elecciones','ingredientes','recetas','receta_ingredientes','menu'] loop
+    if not exists (select 1 from pg_publication_tables
+                   where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
+      execute format('alter publication supabase_realtime add table %I', t);
+    end if;
+  end loop;
+end $$;

@@ -9,6 +9,36 @@ const AJUSTES_INICIALES = {
 
 const ahora = () => new Date().toISOString();
 
+// 'Pechuga de Pollo' -> 'pechuga-de-pollo'
+const slug = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+  .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'item';
+const idLibre = (base, usados) => {
+  let id = base;
+  for (let n = 2; usados.has(id); n++) id = `${base}-${n}`;
+  return id;
+};
+
+// Datos de un ingrediente nuevo (o null si ya existe uno con ese nombre: se devuelve su id).
+function prepararIngrediente(e, nombre, modo) {
+  const limpio = String(nombre).trim().replace(/\s+/g, ' ');
+  if (!limpio) throw new Error('Falta el nombre del ingrediente.');
+  const igual = e.ingredientes.find((i) => i.nombre.toLowerCase() === limpio.toLowerCase());
+  if (igual) return { existente: igual.id };
+  const id = idLibre(slug(limpio), new Set(e.ingredientes.map((i) => i.id)));
+  return { fila: { id, nombre: limpio, consulta: limpio, modo: modo === 'peso' ? 'peso' : 'unidad' } };
+}
+
+// Suma cantidades a la lista: { ingrediente_id: cantidad } -> filas nuevas de la lista.
+function filasSumadas(e, cantidades) {
+  return Object.entries(cantidades)
+    .filter(([id, n]) => n > 0 && e.ingredientes.some((i) => i.id === id))
+    .map(([id, n]) => ({
+      ingrediente_id: id,
+      cantidad: Math.round(((Number(e.lista[id]?.cantidad) || 0) + n) * 1000) / 1000,
+      hecho: false,
+    }));
+}
+
 async function cargarJson(url) {
   try {
     const r = await fetch(url, { cache: 'no-cache' });
@@ -22,7 +52,10 @@ function crearBase(modo) {
   const oyentes = [];
   const store = {
     modo,
-    estado: { ingredientes: [], elecciones: {}, lista: {}, ajustes: { ...AJUSTES_INICIALES }, candidatos: null },
+    // recetas: { id: { id, nombre, ingredientes: [{ ingrediente_id, cantidad }] } }
+    // menu: { 'dia|comida': receta_id }  (dia 0 = lunes ... 6 = domingo; comida: desayuno|comida|cena)
+    estado: { ingredientes: [], elecciones: {}, lista: {}, ajustes: { ...AJUSTES_INICIALES }, candidatos: null, recetas: {}, menu: {} },
+    faltanTablas: false,
     necesitaLogin: false,
     alCambiar: (f) => oyentes.push(f),
     avisar: () => oyentes.forEach((f) => f()),
@@ -46,6 +79,8 @@ export async function crearStoreLocal() {
   }
   if (guardado) {
     Object.assign(e, { ingredientes: guardado.ingredientes, elecciones: guardado.elecciones, lista: guardado.lista });
+    e.recetas = guardado.recetas || {};
+    e.menu = guardado.menu || {};
     e.ajustes = { ...AJUSTES_INICIALES, ...guardado.ajustes };
   } else {
     const ings = (await cargarJson('../data/ingredients.json')) || [];
@@ -70,8 +105,8 @@ export async function crearStoreLocal() {
 
   const guardar = () => {
     try {
-      const { ingredientes, elecciones, lista, ajustes } = e;
-      localStorage.setItem(CLAVE, JSON.stringify({ ingredientes, elecciones, lista, ajustes }));
+      const { ingredientes, elecciones, lista, ajustes, recetas, menu } = e;
+      localStorage.setItem(CLAVE, JSON.stringify({ ingredientes, elecciones, lista, ajustes, recetas, menu }));
     } catch {
       /* ignorar */
     }
@@ -98,10 +133,41 @@ export async function crearStoreLocal() {
     if (ing) Object.assign(ing, cambios);
     guardar();
   };
+  s.crearIngrediente = async (nombre, modo) => {
+    const { existente, fila } = prepararIngrediente(e, nombre, modo);
+    if (existente) return existente;
+    e.ingredientes.push(fila);
+    guardar();
+    return fila.id;
+  };
+  s.sumarLista = async (cantidades) => {
+    for (const f of filasSumadas(e, cantidades)) e.lista[f.ingrediente_id] = { cantidad: f.cantidad, hecho: false };
+    guardar();
+  };
+  s.guardarReceta = async ({ id, nombre, ingredientes }) => {
+    const rid = id || idLibre(slug(nombre), new Set(Object.keys(e.recetas)));
+    e.recetas[rid] = { id: rid, nombre, ingredientes };
+    guardar();
+    return rid;
+  };
+  s.borrarReceta = async (id) => {
+    delete e.recetas[id];
+    for (const [k, v] of Object.entries(e.menu)) if (v === id) delete e.menu[k];
+    guardar();
+  };
+  s.setMenu = async (dia, comida, recetaId) => {
+    if (recetaId) e.menu[`${dia}|${comida}`] = recetaId;
+    else delete e.menu[`${dia}|${comida}`];
+    guardar();
+  };
+  s.vaciarMenu = async () => {
+    e.menu = {};
+    guardar();
+  };
   s.exportar = () => JSON.stringify({ ...e, candidatos: undefined }, null, 1);
   s.importar = (texto) => {
     const d = JSON.parse(texto);
-    Object.assign(e, { ingredientes: d.ingredientes, elecciones: d.elecciones, lista: d.lista });
+    Object.assign(e, { ingredientes: d.ingredientes, elecciones: d.elecciones, lista: d.lista, recetas: d.recetas || {}, menu: d.menu || {} });
     e.ajustes = { ...AJUSTES_INICIALES, ...d.ajustes };
     guardar();
   };
@@ -154,6 +220,22 @@ export async function crearStoreSupabase(config) {
     e.elecciones = Object.fromEntries(ele.data.map((x) => [`${x.ingrediente_id}|${x.tienda}`, x]));
     e.lista = Object.fromEntries(lis.data.map((x) => [x.ingrediente_id, { cantidad: x.cantidad, hecho: x.hecho }]));
     e.ajustes = { ...AJUSTES_INICIALES, ...Object.fromEntries(aju.data.map((x) => [x.clave, x.valor])) };
+
+    // Recetas y menu: si sus tablas aun no existen (falta ejecutar schema.sql), el resto sigue funcionando.
+    const [rec, rin, men] = await Promise.all([
+      sb.from('recetas').select('*'),
+      sb.from('receta_ingredientes').select('*'),
+      sb.from('menu').select('*'),
+    ]);
+    s.faltanTablas = Boolean(rec.error || rin.error || men.error);
+    if (s.faltanTablas) {
+      e.recetas = {};
+      e.menu = {};
+    } else {
+      e.recetas = Object.fromEntries(rec.data.map((r) => [r.id, { id: r.id, nombre: r.nombre, ingredientes: [] }]));
+      for (const x of rin.data) e.recetas[x.receta_id]?.ingredientes.push({ ingrediente_id: x.ingrediente_id, cantidad: Number(x.cantidad) });
+      e.menu = Object.fromEntries(men.data.map((x) => [`${x.dia}|${x.comida}`, x.receta_id]));
+    }
     s.avisar();
   };
   s.recargar = recargar;
@@ -185,6 +267,58 @@ export async function crearStoreSupabase(config) {
     if (error) throw error;
     await recargar();
   };
+  const comprobarTablas = () => {
+    if (s.faltanTablas) throw new Error('Faltan las tablas de recetas en Supabase: ejecuta sql/schema.sql (ver README).');
+  };
+  s.crearIngrediente = async (nombre, modo) => {
+    const { existente, fila } = prepararIngrediente(e, nombre, modo);
+    if (existente) return existente;
+    const { error } = await sb.from('ingredientes').insert(fila);
+    if (error) throw error;
+    await recargar();
+    return fila.id;
+  };
+  s.sumarLista = async (cantidades) => {
+    const filas = filasSumadas(e, cantidades);
+    if (!filas.length) return;
+    const { error } = await sb.from('lista').upsert(filas);
+    if (error) throw error;
+    await recargar();
+  };
+  s.guardarReceta = async ({ id, nombre, ingredientes }) => {
+    comprobarTablas();
+    const rid = id || `${slug(nombre)}-${Date.now().toString(36)}`;
+    const r1 = await sb.from('recetas').upsert({ id: rid, nombre });
+    if (r1.error) throw r1.error;
+    const r2 = await sb.from('receta_ingredientes').delete().eq('receta_id', rid);
+    if (r2.error) throw r2.error;
+    if (ingredientes.length) {
+      const r3 = await sb.from('receta_ingredientes').insert(ingredientes.map((x) => ({ ...x, receta_id: rid })));
+      if (r3.error) throw r3.error;
+    }
+    await recargar();
+    return rid;
+  };
+  s.borrarReceta = async (id) => {
+    comprobarTablas();
+    const { error } = await sb.from('recetas').delete().eq('id', id); // borra tambien sus ingredientes y su sitio en el menu
+    if (error) throw error;
+    await recargar();
+  };
+  s.setMenu = async (dia, comida, recetaId) => {
+    comprobarTablas();
+    const r = recetaId
+      ? await sb.from('menu').upsert({ dia, comida, receta_id: recetaId })
+      : await sb.from('menu').delete().eq('dia', dia).eq('comida', comida);
+    if (r.error) throw r.error;
+    await recargar();
+  };
+  s.vaciarMenu = async () => {
+    comprobarTablas();
+    const { error } = await sb.from('menu').delete().gte('dia', 0);
+    if (error) throw error;
+    await recargar();
+  };
 
   const { data } = await sb.auth.getSession();
   if (!data.session) {
@@ -195,6 +329,10 @@ export async function crearStoreSupabase(config) {
   sb.channel('cambios')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'lista' }, recargar)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'elecciones' }, recargar)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'ingredientes' }, recargar)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'recetas' }, recargar)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'receta_ingredientes' }, recargar)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'menu' }, recargar)
     .subscribe();
   return s;
 }

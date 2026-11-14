@@ -10,18 +10,36 @@ const nf = new Intl.NumberFormat('es-ES', { maximumFractionDigits: 2 });
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 const COLOR = { eroski: '#c8553d', bm: '#3b6ea8', dia: '#b8892b', carrefour: '#2b8a8a' };
+// Búsqueda en la web de cada tienda (q ya va codificado).
 const BUSQUEDA = {
-  dia: 'https://www.dia.es/search?q=',
-  eroski: 'https://supermercado.eroski.es/es/search/results/?q=',
-  bm: 'https://www.online.bmsupermercados.es/es/search?q=',
-  carrefour: 'https://www.carrefour.es/?query=',
+  dia: (q) => `https://www.dia.es/search?q=${q}`,
+  eroski: (q) => `https://supermercado.eroski.es/es/search/results/?q=${q}`,
+  bm: (q) => `https://www.online.bmsupermercados.es/es/s/${q}?showProducts=true`,
+  carrefour: (q) => `https://www.carrefour.es/?query=${q}`,
 };
+// Si ya hay un producto elegido con su dirección, se abre ese producto; si no, la búsqueda.
+const enlaceTienda = (t, consulta, e) => (/^https:\/\//.test(e?.url || '') ? e.url : BUSQUEDA[t](encodeURIComponent(consulta)));
 const AUTO = new Set(['bm', 'eroski']); // tiendas cuyo precio puede leerse solo
-const TABS = ['lista', 'precios', 'productos', 'ajustes'];
+const TABS = ['lista', 'menu', 'recetas', 'precios', 'productos', 'ajustes'];
 const PASO_KG = 0.25;
+const PASO_REC_KG = 0.05; // en recetas, de 50 en 50 g
+const DIAS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+const COMIDAS = [
+  { id: 'desayuno', nombre: 'Desayuno' },
+  { id: 'comida', nombre: 'Comida' },
+  { id: 'cena', nombre: 'Cena' },
+];
+const MODOS_PRECIO = [
+  { id: 'antiguos', nombre: 'Antiguos' },
+  { id: 'lista', nombre: 'Lista' },
+  { id: 'todos', nombre: 'Todos' },
+];
 
 let store;
-const ui = { tab: 'lista', buscarProd: '', buscarAdd: '', verTodos: false, hoja: null, candidato: null };
+const ui = {
+  tab: 'lista', buscarProd: '', buscarAdd: '', buscarPrecio: '', preciosModo: 'antiguos',
+  hoja: null, candidato: null, receta: null, buscarRec: '',
+};
 
 // ------------------------------------------------------------------ utilidades
 const ingrediente = (id) => store.estado.ingredientes.find((i) => i.id === id);
@@ -140,32 +158,64 @@ function filaItem(x, coste, etq, extra) {
   </div>`;
 }
 
+// Edad del precio en pocas letras, para las casillas de la tabla de precios.
+function edadCorta(e) {
+  if (!e || e.precio == null) return '—';
+  if (!e.actualizado) return 'Excel';
+  const d = diasDesde(e.actualizado);
+  return d <= 0 ? 'hoy' : `${d} d`;
+}
+
 function vistaPrecios() {
-  const { elecciones, ajustes } = store.estado;
+  const { ingredientes, elecciones, ajustes } = store.estado;
   const dias = Number(ajustes.diasCaducidad) || 7;
-  const items = itemsLista();
-  const filas = items.filter((it) => ui.verTodos || ajustes.tiendas.some((t) => esAntiguo(elecciones[`${it.id}|${t}`], dias)));
-  let h = `<div class="cabecera"><div><h1>Precios</h1>
-      <p class="suave">Solo lo de tu lista con precio de más de ${dias} días.</p></div></div>
-    <p class="suave">Pulsa «Abrir» para ver el precio en la web de la tienda y escríbelo aquí. Los productos al peso van en €/kg.</p>
-    <p><button class="suave-b" data-acc="verTodos">${ui.verTodos ? 'Ver solo los antiguos' : 'Ver todos los de la lista'}</button></p>`;
-  if (!items.length) return h + '<div class="vacio"><p>Añade primero ingredientes a la lista.</p></div>';
-  if (!filas.length) return h + '<div class="vacio"><h2>Todo al día</h2><p>Los precios de tu lista están actualizados.</p></div>';
-  for (const it of filas) {
-    const u = it.modo === 'peso' ? '€/kg' : '€';
-    h += `<section class="tarjeta"><div class="bloque"><div class="bloque-cab"><h2>${esc(it.nombre)}</h2>${it.modo === 'peso' ? '<span class="etq">al peso</span>' : ''}</div>`;
-    for (const t of ajustes.tiendas) {
-      const e = elecciones[`${it.id}|${t}`];
-      h += `<div class="fila-tienda">
-        <span class="t">${punto(t)}${nombreTienda(t)}</span>
-        <span class="campo-precio"><input type="text" inputmode="decimal" autocomplete="off" data-acc="precio" data-id="${esc(it.id)}" data-t="${t}"
-          value="${e?.precio != null ? Number(e.precio).toFixed(2).replace('.', ',') : ''}" placeholder="0,00" aria-label="Precio en ${nombreTienda(t)}"><span class="u">${u}</span></span>
-        <span class="sub">${etiqueta(e, dias)}<a href="${BUSQUEDA[t]}${encodeURIComponent(it.consulta)}" target="_blank" rel="noopener">Abrir ↗</a></span>
-      </div>`;
-    }
-    h += '</div></section>';
+  const tiendas = ajustes.tiendas;
+  const modo = ui.preciosModo;
+  const q = ui.buscarPrecio.trim().toLowerCase();
+  let base = modo === 'todos'
+    ? ingredientes.map((i) => ({ id: i.id, nombre: i.nombre, consulta: i.consulta, modo: i.modo || 'unidad' }))
+    : itemsLista();
+  if (modo === 'antiguos') base = base.filter((it) => tiendas.some((t) => esAntiguo(elecciones[`${it.id}|${t}`], dias)));
+  const filas = base.filter((it) => !q || it.nombre.toLowerCase().includes(q)).sort(porNombre);
+  const explica = {
+    antiguos: `Lo de tu lista con algún precio de más de ${dias} días.`,
+    lista: 'Todo lo que hay en la lista de la compra.',
+    todos: 'Todos los ingredientes, estén o no en la lista.',
+  }[modo];
+
+  let h = `<div class="cabecera"><div><h1>Precios</h1><p class="suave">${explica}</p></div></div>
+    <div class="segmentos" role="group" aria-label="Qué precios ver">${MODOS_PRECIO.map((m) =>
+      `<button data-acc="modoPrecios" data-modo="${m.id}" aria-pressed="${m.id === modo}">${m.nombre}</button>`).join('')}</div>
+    <p><input type="search" id="buscarPrecio" data-acc="buscarPrecio" placeholder="Buscar ingrediente" value="${esc(ui.buscarPrecio)}" autocomplete="off"></p>
+    <p class="suave">Escribe el precio y pasa a la siguiente casilla: se guarda solo. ↗ abre el producto en la web de la tienda. Los productos al peso van en €/kg.</p>`;
+  if (modo !== 'todos' && !itemsLista().length) {
+    return h + `<div class="vacio"><p>La lista está vacía.</p><button data-acc="modoPrecios" data-modo="todos">Ver todos los ingredientes</button></div>`;
   }
-  return h;
+  if (!filas.length) {
+    if (q) return h + '<div class="vacio"><p>Sin resultados.</p></div>';
+    return h + `<div class="vacio"><h2>Todo al día</h2><p>Los precios de tu lista están actualizados.</p>
+      <button data-acc="modoPrecios" data-modo="todos">Ver todos los ingredientes</button></div>`;
+  }
+
+  h += `<section class="tarjeta tabla-precios" style="--cols:${tiendas.length}">
+    <div class="tp-cab">${tiendas.map((t) => `<span>${punto(t)}${nombreTienda(t)}</span>`).join('')}</div>`;
+  for (const it of filas) {
+    h += `<div class="tp-fila"><div class="tp-nombre">${esc(it.nombre)}${it.modo === 'peso' ? ' <span class="etq">€/kg</span>' : ''}</div><div class="tp-celdas">`;
+    for (const t of tiendas) {
+      const e = elecciones[`${it.id}|${t}`];
+      const clases = ['tp-celda'];
+      if (esAntiguo(e, dias)) clases.push('vieja');
+      else if (e.origen === 'auto') clases.push('auto');
+      h += `<div class="${clases.join(' ')}">
+        <input type="text" inputmode="decimal" autocomplete="off" data-acc="precio" data-id="${esc(it.id)}" data-t="${t}"
+          value="${e?.precio != null ? Number(e.precio).toFixed(2).replace('.', ',') : ''}" placeholder="—"
+          aria-label="Precio de ${esc(it.nombre)} en ${nombreTienda(t)}${it.modo === 'peso' ? ' (€/kg)' : ''}">
+        <span class="tp-info"><span>${edadCorta(e)}</span><a href="${esc(enlaceTienda(t, it.consulta, e))}" target="_blank" rel="noopener"
+          data-acc="abrir" data-id="${esc(it.id)}" data-t="${t}" aria-label="Abrir ${esc(it.nombre)} en ${nombreTienda(t)}">↗</a></span></div>`;
+    }
+    h += '</div></div>';
+  }
+  return h + '</section>';
 }
 
 function vistaProductos() {
@@ -173,7 +223,7 @@ function vistaProductos() {
   const dias = Number(ajustes.diasCaducidad) || 7;
   const q = ui.buscarProd.trim().toLowerCase();
   const lista = ingredientes.filter((i) => !q || i.nombre.toLowerCase().includes(q)).sort(porNombre);
-  let h = `<div class="cabecera"><h1>Productos</h1></div>
+  let h = `<div class="cabecera"><h1>Productos</h1><button class="primario" data-acc="nuevoIng">＋ Nuevo</button></div>
     <p class="suave">Elige qué producto compras en cada tienda. En BM y Eroski escoges de una lista y su precio se actualiza solo; en Dia y Carrefour lo anotas a mano. Activa «Al peso» en lo que compras por kilos.</p>
     <p><input type="search" id="buscarProd" data-acc="buscarProd" placeholder="Buscar ingrediente" value="${esc(ui.buscarProd)}" autocomplete="off"></p>`;
   for (const ing of lista) {
@@ -187,6 +237,83 @@ function vistaProductos() {
           ${AUTO.has(t) && hayCand ? `<button class="mini" data-acc="elegir" data-id="${esc(ing.id)}" data-t="${t}">Elegir</button>` : ''}
           <button class="mini suave-b" data-acc="nombre" data-id="${esc(ing.id)}" data-t="${t}">Editar</button></div>
         <div class="abajo">${e?.nombre ? limpiar(e.nombre) + ' · ' : ''}${e?.precio != null ? `<strong class="num">${euro.format(e.precio)}${peso ? '/kg' : ''}</strong> ` : '<span>sin precio </span>'}${etiqueta(e, dias)}</div></div>`;
+    }
+    h += '</div></section>';
+  }
+  return h;
+}
+
+const avisoTablas = () => (store.faltanTablas
+  ? '<div class="aviso"><span>Falta crear las tablas de recetas y menú en Supabase: pega <strong>sql/schema.sql</strong> en el SQL Editor y pulsa Run.</span></div>'
+  : '');
+
+// "500 g pollo · 2 garbanzos"
+function resumenIngredientes(receta) {
+  return receta.ingredientes
+    .map((x) => ({ ing: ingrediente(x.ingrediente_id), c: Number(x.cantidad) }))
+    .filter((x) => x.ing)
+    .sort((a, b) => a.ing.nombre.localeCompare(b.ing.nombre, 'es'))
+    .map((x) => `${fmtCantidad(x.ing.modo, x.c)} ${esc(x.ing.nombre)}`)
+    .join(' · ');
+}
+
+const recetasOrdenadas = () => Object.values(store.estado.recetas).sort(porNombre);
+
+function vistaRecetas() {
+  const { menu } = store.estado;
+  const recetas = recetasOrdenadas();
+  let h = `<div class="cabecera"><h1>Recetas</h1><button class="primario" data-acc="nuevaReceta">＋ Nueva</button></div>${avisoTablas()}`;
+  if (!recetas.length) {
+    return h + `<div class="vacio">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><path d="M10 30h44v6a16 16 0 0 1-16 16H26a16 16 0 0 1-16-16v-6Z"/><path d="M6 30h52M24 22c0-4 3-4 3-8M32 22c0-4 3-4 3-8M40 22c0-4 3-4 3-8"/></svg>
+      <h2>Aún no hay recetas</h2>
+      <p>Una receta es un nombre y sus ingredientes con la cantidad que se compra. Luego podéis ponerlas en el menú de la semana.</p>
+      <button class="primario" data-acc="nuevaReceta">Crear una receta</button></div>`;
+  }
+  for (const r of recetas) {
+    const usos = Object.values(menu).filter((v) => v === r.id).length;
+    h += `<section class="tarjeta"><div class="bloque">
+      <div class="bloque-cab"><h2>${esc(r.nombre)}</h2><button class="mini suave-b" data-acc="editarReceta" data-id="${esc(r.id)}">Editar</button></div>
+      <p class="suave">${resumenIngredientes(r) || 'Sin ingredientes'}</p>
+      <div class="pie-receta"><span class="suave">${usos ? `En el menú ${usos} ${usos === 1 ? 'vez' : 'veces'}` : 'No está en el menú'}</span>
+        <button class="mini" data-acc="recetaALista" data-id="${esc(r.id)}">Añadir a la compra</button></div>
+    </div></section>`;
+  }
+  return h;
+}
+
+const conDesayuno = () => store.estado.ajustes.desayuno !== false;
+const comidasVisibles = () => COMIDAS.filter((c) => c.id !== 'desayuno' || conDesayuno());
+// Huecos del menú que se ven (si el desayuno está oculto, no cuenta).
+const huecosMenu = () => {
+  const visibles = new Set(comidasVisibles().map((c) => c.id));
+  return Object.entries(store.estado.menu)
+    .filter(([k, rid]) => visibles.has(k.split('|')[1]) && store.estado.recetas[rid]);
+};
+
+function vistaMenu() {
+  const { menu } = store.estado;
+  const recetas = recetasOrdenadas();
+  const hoy = (new Date().getDay() + 6) % 7;
+  const n = huecosMenu().length;
+  let h = `<div class="cabecera"><div><h1>Menú</h1><p class="suave">${n ? `${n} ${n === 1 ? 'comida planificada' : 'comidas planificadas'}` : 'Elige una receta para cada comida'}</p></div>
+    <label class="interruptor"><input type="checkbox" data-acc="desayuno" ${conDesayuno() ? 'checked' : ''}> Desayuno</label></div>${avisoTablas()}`;
+  if (!recetas.length) {
+    return h + `<div class="vacio"><h2>Primero, las recetas</h2><p>Crea alguna receta y después elígela aquí para cada día.</p>
+      <button class="primario" data-acc="ir" data-tab="recetas">Ir a Recetas</button></div>`;
+  }
+  h += `<div class="acciones-menu"><button class="primario" data-acc="menuALista" ${n ? '' : 'disabled'}>Pasar a la lista</button>
+    <button data-acc="vaciarMenu" ${Object.keys(menu).length ? '' : 'disabled'}>Vaciar semana</button></div>`;
+  for (let d = 0; d < 7; d++) {
+    h += `<section class="tarjeta${d === hoy ? ' hoy' : ''}"><div class="bloque">
+      <div class="bloque-cab"><h2>${DIAS[d]}</h2>${d === hoy ? '<span class="etq auto">hoy</span>' : ''}</div>`;
+    for (const c of comidasVisibles()) {
+      const actual = menu[`${d}|${c.id}`];
+      h += `<label class="linea-menu"><span>${c.nombre}</span>
+        <select data-acc="menu" data-dia="${d}" data-comida="${c.id}" aria-label="${c.nombre} del ${DIAS[d].toLowerCase()}">
+          <option value="">—</option>
+          ${recetas.map((r) => `<option value="${esc(r.id)}" ${r.id === actual ? 'selected' : ''}>${esc(r.nombre)}</option>`).join('')}
+        </select></label>`;
     }
     h += '</div></section>';
   }
@@ -264,16 +391,124 @@ function abrirCandidatos(ingId, t) {
   hoja.showModal();
 }
 
+// Editor de recetas: se trabaja sobre un borrador (ui.receta) y se guarda al pulsar «Guardar».
+function abrirReceta(id) {
+  const r = id ? store.estado.recetas[id] : null;
+  ui.receta = {
+    id: r?.id || null,
+    nombre: r?.nombre || '',
+    items: Object.fromEntries((r?.ingredientes || []).map((x) => [x.ingrediente_id, Number(x.cantidad)])),
+  };
+  ui.buscarRec = '';
+  ui.hoja = 'receta';
+  hoja.innerHTML = `<div class="hoja-int">
+    <div class="hoja-cab"><h2>${r ? 'Editar receta' : 'Nueva receta'}</h2><button class="icono" data-acc="cerrar" aria-label="Cerrar">✕</button></div>
+    <input type="text" id="recNombre" data-acc="recNombre" placeholder="Nombre, p. ej. Pollo al curry" value="${esc(ui.receta.nombre)}" autocomplete="off">
+    <div class="hoja-lista">
+      <div id="recItems"></div>
+      <h3 class="sub-h">Añadir ingredientes</h3>
+      <input type="search" id="buscarRec" data-acc="buscarRec" placeholder="Buscar o crear ingrediente" autocomplete="off">
+      <div id="recRes"></div>
+    </div>
+    <div class="hoja-pie">${r ? '<button class="peligro" data-acc="borrarReceta">Borrar</button>' : '<span></span>'}
+      <button class="primario" data-acc="guardarReceta">Guardar receta</button></div></div>`;
+  pintarReceta();
+  hoja.showModal();
+  if (!r) $('#recNombre').focus();
+}
+
+function pintarReceta() {
+  const items = $('#recItems');
+  const res = $('#recRes');
+  if (!items || !ui.receta) return;
+  const borr = ui.receta.items;
+  const elegidos = Object.keys(borr).map(ingrediente).filter(Boolean).sort(porNombre);
+  items.innerHTML = elegidos.length
+    ? elegidos.map((i) => `<div class="rec-fila"><span class="n">${esc(i.nombre)}</span>
+        <div class="cantidad">
+          <button data-acc="recMenos" data-id="${esc(i.id)}" aria-label="Menos">−</button>
+          <button class="valor" data-acc="recCant" data-id="${esc(i.id)}" aria-label="Cambiar cantidad">${fmtCantidad(i.modo, borr[i.id])}</button>
+          <button data-acc="recMas" data-id="${esc(i.id)}" aria-label="Más">+</button>
+        </div>
+        <button class="icono" data-acc="recQuitar" data-id="${esc(i.id)}" aria-label="Quitar ${esc(i.nombre)}">✕</button></div>`).join('')
+    : '<p class="suave">Aún no hay ingredientes. Búscalos abajo.</p>';
+
+  const q = ui.buscarRec.trim();
+  const ql = q.toLowerCase();
+  const filas = store.estado.ingredientes.filter((i) => !(i.id in borr) && (!ql || i.nombre.toLowerCase().includes(ql))).sort(porNombre);
+  const existe = store.estado.ingredientes.some((i) => i.nombre.toLowerCase() === ql);
+  res.innerHTML = filas.map((i) => `<button class="add-fila" data-acc="recAdd" data-id="${esc(i.id)}">
+      <span>${esc(i.nombre)} ${i.modo === 'peso' ? '<span class="etq kg">€/kg</span>' : ''}</span><span class="marca">＋</span></button>`).join('')
+    + (q && !existe
+      ? `<div class="crear-ing"><button data-acc="recCrear" data-modo="unidad">＋ Crear «${esc(q)}»</button>
+         <button data-acc="recCrear" data-modo="peso">＋ Crear «${esc(q)}» al peso</button></div>`
+      : '')
+    || '<p class="suave">No quedan más ingredientes.</p>';
+}
+
+function cambiarCantReceta(id, sentido) {
+  const peso = esPeso(id);
+  const paso = peso ? PASO_REC_KG : 1;
+  const actual = ui.receta.items[id] || paso;
+  ui.receta.items[id] = Math.max(paso, Math.round((actual + sentido * paso) * 1000) / 1000);
+  pintarReceta();
+}
+
+// Suma los ingredientes de varias recetas: { ingrediente_id: cantidad }
+function totalRecetas(ids) {
+  const total = {};
+  for (const rid of ids) {
+    for (const x of store.estado.recetas[rid]?.ingredientes || []) {
+      total[x.ingrediente_id] = (total[x.ingrediente_id] || 0) + Number(x.cantidad);
+    }
+  }
+  return total;
+}
+
+// Mensaje breve abajo de la pantalla.
+let temporizadorAviso;
+function avisar(texto) {
+  let el = document.getElementById('toast');
+  if (!el) {
+    el = Object.assign(document.createElement('div'), { id: 'toast', role: 'status' });
+    document.body.append(el);
+  }
+  el.textContent = texto;
+  el.classList.add('ver');
+  clearTimeout(temporizadorAviso);
+  temporizadorAviso = setTimeout(() => el.classList.remove('ver'), 2800);
+}
+
 // ------------------------------------------------------------------ pintar
+// Selector que vuelve a encontrar un campo tras repintar (para no perder el foco al escribir).
+function selectorDe(el) {
+  const d = el.dataset;
+  return ['acc', 'id', 't', 'dia', 'comida'].filter((k) => d[k] != null)
+    .map((k) => `[data-${k}="${CSS.escape(d[k])}"]`).join('');
+}
+
 function render() {
   document.querySelectorAll('#pestanas button').forEach((b) => b.setAttribute('aria-current', b.dataset.tab === ui.tab ? 'page' : 'false'));
   if (store.necesitaLogin) {
     vista.innerHTML = vistaLogin();
     return;
   }
-  const vistas = { lista: vistaLista, precios: vistaPrecios, productos: vistaProductos, ajustes: vistaAjustes };
+  const act = document.activeElement;
+  const foco = act && vista.contains(act) && act.dataset.acc
+    ? { sel: selectorDe(act), texto: act.matches('input[type=text], input[type=search]'), valor: act.value, ini: act.selectionStart, fin: act.selectionEnd }
+    : null;
+  const vistas = { lista: vistaLista, menu: vistaMenu, recetas: vistaRecetas, precios: vistaPrecios, productos: vistaProductos, ajustes: vistaAjustes };
   vista.innerHTML = vistas[ui.tab]();
+  if (foco) {
+    const el = vista.querySelector(foco.sel);
+    if (el) {
+      if (foco.texto) el.value = foco.valor;
+      el.focus({ preventScroll: true });
+      if (foco.texto) try { el.setSelectionRange(foco.ini, foco.fin); } catch { /* algunos campos no lo admiten */ }
+    }
+  }
   if (hoja.open && ui.hoja === 'add') pintarAdd();
+  if (hoja.open && ui.hoja === 'receta') pintarReceta();
 }
 
 function irA(tab) {
@@ -292,8 +527,9 @@ async function accion(fn) {
   }
 }
 
-hoja.addEventListener('click', (ev) => { if (ev.target === hoja) hoja.close(); });
-hoja.addEventListener('close', () => { ui.hoja = null; });
+// Tocar fuera cierra la hoja, salvo en el editor de recetas (para no perder lo escrito sin querer).
+hoja.addEventListener('click', (ev) => { if (ev.target === hoja && ui.hoja !== 'receta') hoja.close(); });
+hoja.addEventListener('close', () => { ui.hoja = null; ui.receta = null; });
 
 document.addEventListener('click', (ev) => {
   const b = ev.target.closest('[data-acc], #pestanas button');
@@ -328,7 +564,96 @@ document.addEventListener('click', (ev) => {
       return accion(async () => {
         for (const [k, v] of Object.entries(lista)) if (v.hecho) await store.setLista(k, null);
       });
-    case 'verTodos': ui.verTodos = !ui.verTodos; return render();
+    case 'modoPrecios': ui.preciosModo = b.dataset.modo; return render();
+    case 'nuevoIng': {
+      const nombre = prompt('Nombre del ingrediente nuevo (después puedes marcar «Al peso» y anotar sus precios):');
+      if (!nombre || !nombre.trim()) return;
+      return accion(async () => {
+        await store.crearIngrediente(nombre, 'unidad');
+        ui.buscarProd = nombre.trim();
+        render();
+      });
+    }
+    case 'nuevaReceta': return abrirReceta(null);
+    case 'editarReceta': return abrirReceta(id);
+    case 'recAdd':
+      ui.receta.items[id] = esPeso(id) ? PASO_KG : 1;
+      ui.buscarRec = '';
+      $('#buscarRec').value = '';
+      return pintarReceta();
+    case 'recQuitar':
+      delete ui.receta.items[id];
+      return pintarReceta();
+    case 'recMas': return cambiarCantReceta(id, 1);
+    case 'recMenos': return cambiarCantReceta(id, -1);
+    case 'recCant': {
+      const peso = esPeso(id);
+      const actual = ui.receta.items[id];
+      const txt = prompt(peso ? `Gramos de ${ingrediente(id).nombre}:` : `Unidades de ${ingrediente(id).nombre}:`, peso ? Math.round(actual * 1000) : actual);
+      if (txt === null) return;
+      const v = aNumero(txt);
+      if (!Number.isFinite(v) || v <= 0) return alert('Escribe un número mayor que 0.');
+      ui.receta.items[id] = peso ? Math.round(v) / 1000 : Math.max(1, Math.round(v));
+      return pintarReceta();
+    }
+    case 'recCrear': {
+      const nombre = ui.buscarRec.trim();
+      if (!nombre) return;
+      const modo = b.dataset.modo;
+      return accion(async () => {
+        const nuevo = await store.crearIngrediente(nombre, modo);
+        if (!ui.receta) return;
+        ui.receta.items[nuevo] = modo === 'peso' ? PASO_KG : 1;
+        ui.buscarRec = '';
+        const campo = $('#buscarRec');
+        if (campo) campo.value = '';
+        pintarReceta();
+      });
+    }
+    case 'guardarReceta': {
+      const r = ui.receta;
+      const nombre = r.nombre.trim();
+      if (!nombre) { $('#recNombre').focus(); return alert('Ponle un nombre a la receta.'); }
+      const ingredientes = Object.entries(r.items).map(([ingrediente_id, cantidad]) => ({ ingrediente_id, cantidad }));
+      if (!ingredientes.length) return alert('Añade al menos un ingrediente.');
+      return accion(async () => {
+        await store.guardarReceta({ id: r.id, nombre, ingredientes });
+        hoja.close();
+        avisar(r.id ? 'Receta guardada' : `Receta «${nombre}» creada`);
+      });
+    }
+    case 'borrarReceta': {
+      const r = ui.receta;
+      const usos = Object.values(store.estado.menu).filter((v) => v === r.id).length;
+      if (!confirm(`¿Borrar «${r.nombre}»?${usos ? ` También se quitará del menú (${usos} ${usos === 1 ? 'vez' : 'veces'}).` : ''}`)) return;
+      return accion(async () => {
+        await store.borrarReceta(r.id);
+        hoja.close();
+        avisar('Receta borrada');
+      });
+    }
+    case 'recetaALista': {
+      const r = store.estado.recetas[id];
+      return accion(async () => {
+        await store.sumarLista(totalRecetas([id]));
+        avisar(`Ingredientes de «${r.nombre}» añadidos a la lista`);
+      });
+    }
+    case 'menuALista': {
+      const huecos = huecosMenu();
+      const total = totalRecetas(huecos.map(([, rid]) => rid));
+      const n = Object.keys(total).length;
+      if (!n) return;
+      if (!confirm(`Se añadirán ${n} ${n === 1 ? 'ingrediente' : 'ingredientes'} de ${huecos.length} ${huecos.length === 1 ? 'comida' : 'comidas'} a la lista. Lo que ya esté en la lista se suma. ¿Seguir?`)) return;
+      return accion(async () => {
+        await store.sumarLista(total);
+        irA('lista');
+        avisar('Menú pasado a la lista');
+      });
+    }
+    case 'vaciarMenu':
+      if (!confirm('¿Quitar todas las recetas del menú de la semana? Las recetas no se borran.')) return;
+      return accion(() => store.vaciarMenu());
     case 'elegir': return abrirCandidatos(id, t);
     case 'cand': {
       const { ingId, t: tienda, cands } = ui.candidato;
@@ -415,6 +740,8 @@ document.addEventListener('change', (ev) => {
         if (lista[id]) await store.setLista(id, { cantidad: aPeso ? 0.5 : 1 });
       });
     }
+    case 'menu': return accion(() => store.setMenu(Number(el.dataset.dia), el.dataset.comida, el.value || null));
+    case 'desayuno': return accion(() => store.setAjuste('desayuno', el.checked));
     case 'tienda': {
       const nuevas = TIENDAS.map((x) => x.id).filter((x) => (x === id ? el.checked : ajustes.tiendas.includes(x)));
       if (!nuevas.length) { el.checked = true; return alert('Hace falta al menos una tienda.'); }
@@ -445,13 +772,17 @@ document.addEventListener('input', (ev) => {
     ui.buscarAdd = el.value;
     return pintarAdd();
   }
-  if (el.dataset.acc === 'buscarProd') {
-    ui.buscarProd = el.value;
-    const pos = el.selectionStart;
-    render();
-    const nuevo = document.getElementById('buscarProd');
-    nuevo.focus();
-    nuevo.setSelectionRange(pos, pos);
+  if (el.dataset.acc === 'buscarRec') {
+    ui.buscarRec = el.value;
+    return pintarReceta();
+  }
+  if (el.dataset.acc === 'recNombre') {
+    ui.receta.nombre = el.value;
+    return;
+  }
+  if (el.dataset.acc === 'buscarProd' || el.dataset.acc === 'buscarPrecio') {
+    ui[el.dataset.acc] = el.value;
+    render(); // render() devuelve el foco al buscador
   }
 });
 
@@ -463,7 +794,14 @@ document.addEventListener('input', (ev) => {
     vista.innerHTML = `<div class="cabecera"><h1>No se pudo iniciar</h1></div><p class="error">${esc(e.message || e)}</p>`;
     return;
   }
-  store.alCambiar(render);
+  // Se repinta justo después del evento: así, al pasar de una casilla de precio a la siguiente,
+  // el foco ya está en la nueva y render() puede devolvérselo.
+  let pendiente = false;
+  store.alCambiar(() => {
+    if (pendiente) return;
+    pendiente = true;
+    setTimeout(() => { pendiente = false; render(); }, 0);
+  });
   ui.tab = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'lista';
   render();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

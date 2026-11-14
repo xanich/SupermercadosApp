@@ -10,7 +10,7 @@ App web instalable en el iPhone (PWA) que reparte la compra semanal entre Eroski
 
 | Carpeta | Contenido |
 |---|---|
-| `app/` | La app (HTML/JS sin dependencias). Pantallas: Lista, Precios, Productos, Ajustes |
+| `app/` | La app (HTML/JS sin dependencias). Pantallas: Lista, Menú, Recetas, Precios, Productos, Ajustes |
 | `scraper/` | Lector de precios de BM y Eroski (`node scraper/run.mjs ...`) |
 | `sql/schema.sql` | Tablas y reglas de seguridad de Supabase |
 | `data/ingredients.json` | Los 30 ingredientes de vuestro Excel con sus precios (punto de partida) |
@@ -64,6 +64,16 @@ Busca cada ingrediente en BM y Eroski (tarda unos 2 minutos, con pausa entre con
 ## Productos al peso (€/kg)
 
 Algunos ingredientes se compran por kilos (pollo, salmón, pimientos, patatas...). En **Productos** tienen el interruptor **Al peso**: su precio se guarda y se escribe en **€/kg**, y la cantidad de la lista se mide en gramos o kilos (botones de 250 g; pulsa la cantidad para escribir una exacta). Vienen marcados de partida los 14 que en vuestro Excel tienen precio por kilo; se cambia producto a producto. Al elegir un producto de BM o Eroski al peso, la app guarda su precio por kilo y solo deja elegir los que lo tienen.
+
+## Precios
+
+La pestaña **Precios** tiene tres vistas: **Antiguos** (lo de la lista con algún precio caducado), **Lista** (todo lo de la lista) y **Todos** (todos los ingredientes). Es una tabla con una casilla por tienda: escribe el precio y pasa a la siguiente casilla, se guarda solo. La flecha ↗ abre el producto elegido en la web de la tienda o, si no hay ninguno elegido, la búsqueda.
+
+## Recetas y menú semanal
+
+- **Recetas:** cada receta es un nombre y sus ingredientes con la cantidad que se compra (unidades, o gramos si va al peso). No hay raciones: la cantidad escrita es la que se añade a la lista. Si falta un ingrediente, se crea desde el propio buscador de la receta (o en **Productos → Nuevo**). Los ingredientes nuevos no tienen candidatos de BM/Eroski hasta volver a ejecutar `node scraper/run.mjs candidatos`; mientras, su precio se anota a mano.
+- **Menú:** comida y cena para cada día de lunes a domingo; el desayuno se puede ocultar con su interruptor. **Pasar a la lista** suma los ingredientes de todas las comidas del menú a la lista (si algo ya estaba, se suman las cantidades; pulsarlo dos veces lo duplica).
+- **Supabase:** recetas y menú usan tres tablas nuevas (`recetas`, `receta_ingredientes`, `menu`). Hay que volver a pegar `sql/schema.sql` en el SQL Editor y pulsar **Run** una vez; se puede ejecutar varias veces sin problema. Mientras no se haga, la app avisa en esas pestañas y lo demás sigue funcionando.
 
 ## Cómo reparte la app
 
