@@ -12,12 +12,14 @@ create table if not exists ingredientes (
 );
 alter table ingredientes add column if not exists modo text not null default 'unidad'
   check (modo in ('unidad','peso'));
+-- 'carne': se compra en la carniceria cercana (tienda "halal") y no en Dia.
+alter table ingredientes add column if not exists carne boolean not null default false;
 
 -- El producto concreto que compras de cada ingrediente en cada tienda, con su ultimo precio.
 create table if not exists elecciones (
   id             bigint generated always as identity primary key,
   ingrediente_id text not null references ingredientes(id) on delete cascade,
-  tienda         text not null check (tienda in ('dia','eroski','bm','carrefour')),
+  tienda         text not null check (tienda in ('dia','eroski','bm','carrefour','halal')),
   nombre         text,                  -- nombre del producto en esa tienda
   ext_id         text,                  -- id del producto en la tienda (solo BM/Eroski)
   url            text,
@@ -28,6 +30,11 @@ create table if not exists elecciones (
   origen         text not null default 'manual' check (origen in ('auto','manual','excel')),
   unique (ingrediente_id, tienda)
 );
+
+-- Bases creadas antes de existir "halal": se amplia la lista de tiendas permitidas.
+alter table elecciones drop constraint if exists elecciones_tienda_check;
+alter table elecciones add constraint elecciones_tienda_check
+  check (tienda in ('dia','eroski','bm','carrefour','halal'));
 
 -- Una fila por cambio de precio automatico, para ver la evolucion.
 create table if not exists historial (

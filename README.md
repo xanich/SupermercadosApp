@@ -3,7 +3,7 @@
 App web instalable en el iPhone (PWA) que reparte la compra semanal entre Eroski, BM, Dia y Carrefour según el precio de cada producto.
 
 - **BM y Eroski:** el precio se lee solo una vez al día.
-- **Dia y Carrefour:** el precio se escribe a mano en la app (sus webs bloquean los programas automáticos y no se intenta esquivarlo).
+- **Dia, Carrefour y Halal:** el precio se escribe a mano en la app (sus webs bloquean los programas automáticos y no se intenta esquivarlo).
 - Los dos móviles comparten lista y precios en tiempo real (Supabase).
 
 ## Qué hay en la carpeta
@@ -74,6 +74,10 @@ La pestaña **Precios** tiene tres vistas: **Antiguos** (lo de la lista con alg�
 - **Recetas:** cada receta es un nombre y sus ingredientes con la cantidad que se compra (unidades, o gramos si va al peso). No hay raciones: la cantidad escrita es la que se añade a la lista. Si falta un ingrediente, se crea desde el propio buscador de la receta (o en **Productos → Nuevo**). Los ingredientes nuevos no tienen candidatos de BM/Eroski hasta volver a ejecutar `node scraper/run.mjs candidatos`; mientras, su precio se anota a mano.
 - **Menú:** comida y cena para cada día de lunes a domingo; el desayuno se puede ocultar con su interruptor. **Pasar a la lista** suma los ingredientes de todas las comidas del menú a la lista (si algo ya estaba, se suman las cantidades; pulsarlo dos veces lo duplica).
 - **Supabase:** recetas y menú usan tres tablas nuevas (`recetas`, `receta_ingredientes`, `menu`). Hay que volver a pegar `sql/schema.sql` en el SQL Editor y pulsar **Run** una vez; se puede ejecutar varias veces sin problema. Mientras no se haga, la app avisa en esas pestañas y lo demás sigue funcionando.
+
+## Carne y Halal
+
+Dia no tiene carnicería, así que la carne no se compra allí: los ingredientes marcados como **Carne** (interruptor en **Productos**) usan **Halal** (la carnicería de casa) en lugar de Dia. Ahora son «carne molida» y «filetes de ternera (rabadilla)». Halal solo admite precio a mano (€/kg) y no tiene enlace web. Se puede desactivar en **Ajustes**. Si montáis otro proyecto de Supabase, `sql/schema.sql` ya incluye la columna `carne` y la tienda `halal`.
 
 ## Cómo reparte la app
 

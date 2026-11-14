@@ -5,9 +5,20 @@ export const TIENDAS = [
   { id: 'bm', nombre: 'BM' },
   { id: 'dia', nombre: 'Dia' },
   { id: 'carrefour', nombre: 'Carrefour' },
+  { id: 'halal', nombre: 'Halal' }, // carnicería cercana: solo para los ingredientes marcados como carne
 ];
 
 export const nombreTienda = (id) => TIENDAS.find((t) => t.id === id)?.nombre ?? id;
+
+/**
+ * Tiendas donde se puede comprar un ingrediente, de entre las activas.
+ * La carne no se compra en Dia (no tiene carnicería): allí va Halal, en el mismo sitio de la lista.
+ * El resto de ingredientes nunca usa Halal.
+ */
+export function tiendasDe(ing, activas) {
+  if (ing?.carne) return activas.filter((t) => t !== 'dia');
+  return activas.filter((t) => t !== 'halal');
+}
 
 const opciones = (ing, elecciones, activas) =>
   activas
@@ -28,7 +39,7 @@ const mejor = (ops) => {
 
 /**
  * Reparte los ingredientes entre tiendas segun el precio.
- * items: [{id, cantidad}] · elecciones: {'ingrediente|tienda': {...}} · tiendas: ids activos
+ * items: [{id, cantidad, carne?}] · elecciones: {'ingrediente|tienda': {...}} · tiendas: ids activos
  * ahorroMin: si una tienda ahorra menos de esto (en €) respecto a la siguiente mejor opcion,
  * se descarta y sus productos pasan a otras tiendas (no compensa el viaje).
  */
@@ -39,7 +50,7 @@ export function asignar(items, elecciones, tiendas, ahorroMin = 0) {
     const por = {};
     const sin = [];
     for (const it of items) {
-      const ops = opciones(it.id, elecciones, act);
+      const ops = opciones(it.id, elecciones, tiendasDe(it, act));
       if (!ops.length) {
         sin.push(it);
         continue;
@@ -82,7 +93,8 @@ export function asignar(items, elecciones, tiendas, ahorroMin = 0) {
   // Mejor tienda unica que pueda surtir toda la lista, para medir cuanto se ahorra repartiendo.
   let unica = null;
   for (const t of tiendas) {
-    const costes = items.map((it) => elecciones[`${it.id}|${t}`]?.precio);
+    // Una tienda sirve para toda la lista solo si todos los ingredientes se pueden comprar en ella.
+    const costes = items.map((it) => (tiendasDe(it, [t]).length ? elecciones[`${it.id}|${t}`]?.precio : null));
     if (items.length && costes.every((c) => c != null)) {
       const suma = costes.reduce((s, c, i) => s + c * items[i].cantidad, 0);
       if (!unica || suma < unica.total) unica = { t, total: suma };

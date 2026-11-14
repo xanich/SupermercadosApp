@@ -1,6 +1,6 @@
 import { config } from './config.js';
 import { crearStoreLocal, crearStoreSupabase } from './store.js';
-import { TIENDAS, nombreTienda, asignar, diasDesde, esAntiguo } from './compare.js';
+import { TIENDAS, nombreTienda, asignar, tiendasDe, diasDesde, esAntiguo } from './compare.js';
 
 const $ = (s) => document.querySelector(s);
 const vista = $('#vista');
@@ -9,7 +9,7 @@ const euro = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR'
 const nf = new Intl.NumberFormat('es-ES', { maximumFractionDigits: 2 });
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-const COLOR = { eroski: '#c8553d', bm: '#3b6ea8', dia: '#b8892b', carrefour: '#2b8a8a' };
+const COLOR = { eroski: '#c8553d', bm: '#3b6ea8', dia: '#b8892b', carrefour: '#2b8a8a', halal: '#7b5ea7' };
 // Búsqueda en la web de cada tienda (q ya va codificado).
 const BUSQUEDA = {
   dia: (q) => `https://www.dia.es/search?q=${q}`,
@@ -18,7 +18,8 @@ const BUSQUEDA = {
   carrefour: (q) => `https://www.carrefour.es/?query=${q}`,
 };
 // Si ya hay un producto elegido con su dirección, se abre ese producto; si no, la búsqueda.
-const enlaceTienda = (t, consulta, e) => (/^https:\/\//.test(e?.url || '') ? e.url : BUSQUEDA[t](encodeURIComponent(consulta)));
+// La carnicería (Halal) no tiene web: devuelve null y no se muestra enlace.
+const enlaceTienda = (t, consulta, e) => (/^https:\/\//.test(e?.url || '') ? e.url : BUSQUEDA[t]?.(encodeURIComponent(consulta)) ?? null);
 const AUTO = new Set(['bm', 'eroski']); // tiendas cuyo precio puede leerse solo
 const TABS = ['lista', 'menu', 'recetas', 'precios', 'productos', 'ajustes'];
 const PASO_KG = 0.25;
@@ -70,7 +71,7 @@ function itemsLista() {
   const por = Object.fromEntries(ingredientes.map((i) => [i.id, i]));
   return Object.entries(lista)
     .filter(([id]) => por[id])
-    .map(([id, v]) => ({ id, nombre: por[id].nombre, consulta: por[id].consulta, modo: por[id].modo || 'unidad', cantidad: Number(v.cantidad), hecho: v.hecho }))
+    .map(([id, v]) => ({ id, nombre: por[id].nombre, consulta: por[id].consulta, modo: por[id].modo || 'unidad', carne: Boolean(por[id].carne), cantidad: Number(v.cantidad), hecho: v.hecho }))
     .sort(porNombre);
 }
 
@@ -170,12 +171,20 @@ function vistaPrecios() {
   const { ingredientes, elecciones, ajustes } = store.estado;
   const dias = Number(ajustes.diasCaducidad) || 7;
   const tiendas = ajustes.tiendas;
+  // Columnas de la tabla: las cadenas. Para la carne, Halal ocupa el sitio de Dia.
+  const cab = tiendas.filter((t) => t !== 'halal');
+  const celdasDe = (it) => {
+    if (!it.carne) return tiendasDe(it, cab);
+    const c = cab.map((t) => (t === 'dia' ? 'halal' : t)).filter((t) => t !== 'halal' || tiendas.includes('halal'));
+    if (tiendas.includes('halal') && !c.includes('halal')) c.push('halal'); // Dia desactivada: Halal al final
+    return c;
+  };
   const modo = ui.preciosModo;
   const q = ui.buscarPrecio.trim().toLowerCase();
   let base = modo === 'todos'
-    ? ingredientes.map((i) => ({ id: i.id, nombre: i.nombre, consulta: i.consulta, modo: i.modo || 'unidad' }))
+    ? ingredientes.map((i) => ({ id: i.id, nombre: i.nombre, consulta: i.consulta, modo: i.modo || 'unidad', carne: Boolean(i.carne) }))
     : itemsLista();
-  if (modo === 'antiguos') base = base.filter((it) => tiendas.some((t) => esAntiguo(elecciones[`${it.id}|${t}`], dias)));
+  if (modo === 'antiguos') base = base.filter((it) => celdasDe(it).some((t) => esAntiguo(elecciones[`${it.id}|${t}`], dias)));
   const filas = base.filter((it) => !q || it.nombre.toLowerCase().includes(q)).sort(porNombre);
   const explica = {
     antiguos: `Lo de tu lista con algún precio de más de ${dias} días.`,
@@ -197,21 +206,26 @@ function vistaPrecios() {
       <button data-acc="modoPrecios" data-modo="todos">Ver todos los ingredientes</button></div>`;
   }
 
-  h += `<section class="tarjeta tabla-precios" style="--cols:${tiendas.length}">
-    <div class="tp-cab">${tiendas.map((t) => `<span>${punto(t)}${nombreTienda(t)}</span>`).join('')}</div>`;
+  const cols = Math.max(cab.length, ...filas.map((it) => celdasDe(it).length));
+  h += `<section class="tarjeta tabla-precios" style="--cols:${cols}">
+    <div class="tp-cab">${cab.map((t) => `<span>${punto(t)}${nombreTienda(t)}</span>`).join('')}</div>`;
   for (const it of filas) {
+    const celdas = celdasDe(it);
+    // Si las tiendas de la fila no coinciden con las columnas (carne: Halal en lugar de Dia), cada casilla dice cuál es.
+    const rotular = celdas.some((t, i) => t !== cab[i]);
     h += `<div class="tp-fila"><div class="tp-nombre">${esc(it.nombre)}${it.modo === 'peso' ? ' <span class="etq">€/kg</span>' : ''}</div><div class="tp-celdas">`;
-    for (const t of tiendas) {
+    for (const t of celdas) {
       const e = elecciones[`${it.id}|${t}`];
+      const enlace = enlaceTienda(t, it.consulta, e);
       const clases = ['tp-celda'];
       if (esAntiguo(e, dias)) clases.push('vieja');
       else if (e.origen === 'auto') clases.push('auto');
-      h += `<div class="${clases.join(' ')}">
+      h += `<div class="${clases.join(' ')}">${rotular ? `<span class="tp-tienda">${punto(t)}${nombreTienda(t)}</span>` : ''}
         <input type="text" inputmode="decimal" autocomplete="off" data-acc="precio" data-id="${esc(it.id)}" data-t="${t}"
           value="${e?.precio != null ? Number(e.precio).toFixed(2).replace('.', ',') : ''}" placeholder="—"
           aria-label="Precio de ${esc(it.nombre)} en ${nombreTienda(t)}${it.modo === 'peso' ? ' (€/kg)' : ''}">
-        <span class="tp-info"><span>${edadCorta(e)}</span><a href="${esc(enlaceTienda(t, it.consulta, e))}" target="_blank" rel="noopener"
-          data-acc="abrir" data-id="${esc(it.id)}" data-t="${t}" aria-label="Abrir ${esc(it.nombre)} en ${nombreTienda(t)}">↗</a></span></div>`;
+        <span class="tp-info"><span>${edadCorta(e)}</span>${enlace ? `<a href="${esc(enlace)}" target="_blank" rel="noopener"
+          data-acc="abrir" data-id="${esc(it.id)}" data-t="${t}" aria-label="Abrir ${esc(it.nombre)} en ${nombreTienda(t)}">↗</a>` : ''}</span></div>`;
     }
     h += '</div></div>';
   }
@@ -224,13 +238,16 @@ function vistaProductos() {
   const q = ui.buscarProd.trim().toLowerCase();
   const lista = ingredientes.filter((i) => !q || i.nombre.toLowerCase().includes(q)).sort(porNombre);
   let h = `<div class="cabecera"><h1>Productos</h1><button class="primario" data-acc="nuevoIng">＋ Nuevo</button></div>
-    <p class="suave">Elige qué producto compras en cada tienda. En BM y Eroski escoges de una lista y su precio se actualiza solo; en Dia y Carrefour lo anotas a mano. Activa «Al peso» en lo que compras por kilos.</p>
+    <p class="suave">Elige qué producto compras en cada tienda. En BM y Eroski escoges de una lista y su precio se actualiza solo; en Dia, Carrefour y Halal lo anotas a mano. Activa «Al peso» en lo que compras por kilos y «Carne» en lo que compras en la carnicería (allí va Halal en lugar de Dia).</p>
     <p><input type="search" id="buscarProd" data-acc="buscarProd" placeholder="Buscar ingrediente" value="${esc(ui.buscarProd)}" autocomplete="off"></p>`;
   for (const ing of lista) {
     const peso = ing.modo === 'peso';
     h += `<section class="tarjeta"><div class="bloque"><div class="bloque-cab"><h2>${esc(ing.nombre)}</h2>
-      <label class="interruptor"><input type="checkbox" data-acc="peso" data-id="${esc(ing.id)}" ${peso ? 'checked' : ''}> Al peso</label></div>`;
-    for (const t of TIENDAS.map((x) => x.id)) {
+      <div class="interruptores">
+        <label class="interruptor"><input type="checkbox" data-acc="carne" data-id="${esc(ing.id)}" ${ing.carne ? 'checked' : ''}> Carne</label>
+        <label class="interruptor"><input type="checkbox" data-acc="peso" data-id="${esc(ing.id)}" ${peso ? 'checked' : ''}> Al peso</label>
+      </div></div>`;
+    for (const t of tiendasDe(ing, TIENDAS.map((x) => x.id))) {
       const e = elecciones[`${ing.id}|${t}`];
       const hayCand = candidatos?.ingredientes?.[ing.id]?.[t]?.length;
       h += `<div class="fila-prod"><div class="arriba"><span class="t">${punto(t)}${nombreTienda(t)}</span>
@@ -328,7 +345,7 @@ function vistaAjustes() {
       <div class="ajuste"><strong>Tiendas que usáis</strong>
         ${TIENDAS.map((t) => `<label class="linea"><span>${punto(t.id)} ${t.nombre}</span>
           <input class="redonda" type="checkbox" data-acc="tienda" data-id="${t.id}" ${ajustes.tiendas.includes(t.id) ? 'checked' : ''}></label>`).join('')}
-        <p class="suave">Marca solo las que os queden cerca.</p></div>
+        <p class="suave">Marca solo las que os queden cerca. Halal es la carnicería: solo se usa para los ingredientes marcados como «Carne», y para ellos sustituye a Dia.</p></div>
       <div class="ajuste"><label class="linea"><strong>Ahorro mínimo por tienda</strong>
         <input class="corto" type="text" inputmode="decimal" data-acc="ahorro" value="${String(ajustes.ahorroMin).replace('.', ',')}" aria-label="Ahorro mínimo en euros"></label>
         <p class="suave">Si ir a una tienda ahorra menos de estos euros, esos productos pasan a otra tienda. Pon 0 para desactivarlo.</p></div>
@@ -729,6 +746,7 @@ document.addEventListener('change', (ev) => {
       }
       return accion(() => store.setEleccion(id, t, { precio: v, precio_unidad: null, unidad: null, origen: 'manual' }));
     }
+    case 'carne': return accion(() => store.setIngrediente(id, { carne: el.checked }));
     case 'peso': {
       const aPeso = el.checked;
       const ok = confirm(aPeso

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { asignar } from '../app/compare.js';
+import { asignar, tiendasDe } from '../app/compare.js';
 
 const e = (precio, extra = {}) => ({ precio, precio_unidad: null, unidad: null, ...extra });
 const el = {
@@ -43,4 +43,20 @@ r = asignar([{ id: 'p', cantidad: 0.3 }], pesoEl, ['eroski', 'dia'], 0);
 assert.equal(donde(r, 'p'), 'eroski');
 assert.ok(Math.abs(r.total - 3) < 1e-9);
 assert.ok(Math.abs(r.unica.total - 3) < 1e-9);
+// 7) Carne: no se compra en Dia, va a Halal. El resto de ingredientes nunca va a Halal.
+const carneEl = {
+  'm|dia': e(5), 'm|halal': e(9), 'm|eroski': e(12),   // Dia es más barato pero no tiene carnicería
+  'n|halal': e(1), 'n|eroski': e(3),                   // no es carne: Halal no cuenta
+};
+const lista7 = [{ id: 'm', cantidad: 1, carne: true }, { id: 'n', cantidad: 1 }];
+r = asignar(lista7, carneEl, ['eroski', 'dia', 'halal'], 0);
+assert.equal(donde(r, 'm'), 'halal');
+assert.equal(donde(r, 'n'), 'eroski');
+assert.equal(r.total, 9 + 3);
+assert.deepEqual(r.unica, { t: 'eroski', total: 15 }); // Halal y Dia no sirven para toda la lista
+// Con Halal desactivada, la carne va a la mejor tienda restante (nunca a Dia).
+r = asignar(lista7, carneEl, ['eroski', 'dia'], 0);
+assert.equal(donde(r, 'm'), 'eroski');
+assert.deepEqual(tiendasDe({ carne: true }, ['eroski', 'dia', 'halal']), ['eroski', 'halal']);
+assert.deepEqual(tiendasDe({ carne: false }, ['eroski', 'dia', 'halal']), ['eroski', 'dia']);
 console.log('compare.js: todas las pruebas OK');

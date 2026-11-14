@@ -102,7 +102,7 @@ async function sembrar() {
     const r = await sb(ruta, { method: 'POST', headers: { Prefer: prefer }, body: JSON.stringify(filas) });
     if (!r.ok) throw new Error(`Supabase ${r.status}: ${await r.text()}`);
   };
-  await enviar('ingredientes?on_conflict=id', ings.map(({ id, nombre, consulta, modo }) => ({ id, nombre, consulta, modo: modo || 'unidad' })), 'resolution=ignore-duplicates,return=minimal');
+  await enviar('ingredientes?on_conflict=id', ings.map(({ id, nombre, consulta, modo, carne }) => ({ id, nombre, consulta, modo: modo || 'unidad', carne: Boolean(carne) })), 'resolution=ignore-duplicates,return=minimal');
   const filas = ings.flatMap((i) =>
     Object.entries(i.precios_excel).filter(([, p]) => p != null)
       .map(([tienda, precio]) => ({ ingrediente_id: i.id, tienda, precio, origen: 'excel', actualizado: null })));

@@ -1,6 +1,6 @@
 [
   {"id":"arroz-basmati","nombre":"arroz basmati","consulta":"arroz basmati","modo":"unidad","precios_excel":{"dia":2.1,"eroski":1.79,"bm":2.2,"carrefour":2.09}},
-  {"id":"filetes-carne","nombre":"filetes carne","consulta":"filetes ternera","modo":"peso","precios_excel":{"dia":null,"eroski":null,"bm":22.95,"carrefour":null}},
+  {"id":"filetes-carne","nombre":"filetes de ternera (rabadilla)","consulta":"filetes ternera rabadilla","modo":"peso","carne":true,"precios_excel":{"dia":null,"eroski":null,"bm":22.95,"carrefour":null}},
   {"id":"cottage","nombre":"cottage","consulta":"cottage","modo":"unidad","precios_excel":{"dia":1.35,"eroski":1.35,"bm":1.99,"carrefour":1.62}},
   {"id":"garbanzos","nombre":"garbanzos","consulta":"garbanzos","modo":"unidad","precios_excel":{"dia":0.9,"eroski":0.9,"bm":2.55,"carrefour":0.9}},
   {"id":"cherries","nombre":"cherries","consulta":"tomate cherry","modo":"unidad","precios_excel":{"dia":2.98,"eroski":2.2,"bm":3.78,"carrefour":2.0}},
@@ -8,7 +8,7 @@
   {"id":"doradas","nombre":"doradas","consulta":"doradas","modo":"peso","precios_excel":{"dia":null,"eroski":10.98,"bm":14.97,"carrefour":10.74}},
   {"id":"limas","nombre":"limas","consulta":"limas","modo":"unidad","precios_excel":{"dia":1.5,"eroski":1.61,"bm":1.99,"carrefour":1.0}},
   {"id":"tallarines","nombre":"tallarines","consulta":"tallarines pasta","modo":"unidad","precios_excel":{"dia":2.99,"eroski":1.5,"bm":3.09,"carrefour":1.5}},
-  {"id":"carne-molida","nombre":"carne molida","consulta":"carne picada","modo":"peso","precios_excel":{"dia":null,"eroski":5.85,"bm":7.58,"carrefour":5.29}},
+  {"id":"carne-molida","nombre":"carne molida","consulta":"carne picada","modo":"peso","carne":true,"precios_excel":{"dia":null,"eroski":5.85,"bm":7.58,"carrefour":5.29}},
   {"id":"salsa-tomate","nombre":"salsa tomate","consulta":"salsa de tomate","modo":"unidad","precios_excel":{"dia":3.09,"eroski":1.31,"bm":1.99,"carrefour":3.19}},
   {"id":"mozzarella","nombre":"mozzarella","consulta":"mozzarella","modo":"unidad","precios_excel":{"dia":1.6,"eroski":null,"bm":1.6,"carrefour":1.59}},
   {"id":"tortillas-trigo","nombre":"tortillas trigo","consulta":"tortillas de trigo","modo":"unidad","precios_excel":{"dia":1.5,"eroski":2.49,"bm":1.59,"carrefour":1.55}},

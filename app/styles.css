@@ -225,6 +225,9 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
 .tp-fila { padding: 10px 12px; border-top: 1px solid var(--linea); }
 .tp-fila:first-of-type { border-top: 0; }
 .tp-nombre { font-weight: 550; margin-bottom: 6px; overflow-wrap: anywhere; }
+.tp-tienda { display: flex; align-items: center; justify-content: center; gap: 4px; margin-bottom: 3px; font-size: 0.72rem; font-weight: 600; color: var(--suave); white-space: nowrap; overflow: hidden; }
+.tp-tienda .punto { width: 7px; height: 7px; }
+.interruptores { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px 14px; }
 .tp-celda { min-width: 0; }
 /* 16px como mínimo: así el iPhone no hace zoom al escribir */
 .tp-celda input[type=text] { min-height: 40px; padding: 0 6px; text-align: center; font-size: 16px; border-radius: 10px; }

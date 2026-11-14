@@ -84,7 +84,7 @@ export async function crearStoreLocal() {
     e.ajustes = { ...AJUSTES_INICIALES, ...guardado.ajustes };
   } else {
     const ings = (await cargarJson('../data/ingredients.json')) || [];
-    e.ingredientes = ings.map(({ id, nombre, consulta, modo }) => ({ id, nombre, consulta, modo: modo || 'unidad' }));
+    e.ingredientes = ings.map(({ id, nombre, consulta, modo, carne }) => ({ id, nombre, consulta, modo: modo || 'unidad', carne: Boolean(carne) }));
     for (const ing of ings) {
       for (const [t, precio] of Object.entries(ing.precios_excel || {})) {
         if (precio == null) continue;
