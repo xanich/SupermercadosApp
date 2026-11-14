@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { asignar, tiendasDe, factorMenu, sumarRecetas, costeReceta } from '../app/compare.js';
+import { readFileSync } from 'node:fs';
+import { asignar, tiendasDe, factorMenu, sumarRecetas, costeReceta, repartirLista } from '../app/compare.js';
 
 const e = (precio, extra = {}) => ({ precio, precio_unidad: null, unidad: null, ...extra });
 const el = {
@@ -100,4 +101,27 @@ assert.equal(c.repartido.faltan, 0);
 // Con Halal desactivada la carne no se puede comprar en la columna de Dia.
 c = costeReceta(itemsR, elR, ['eroski', 'dia'], 0);
 assert.equal(de('dia').faltan, 2); // pollo y sal
+
+// Lineas fijadas a mano: tienda y precio propios; el resto sigue el reparto automatico.
+{
+  const its = [{ id: 'a', cantidad: 2 }, { id: 'b', cantidad: 1, tienda_compra: 'bm', precio_pagado: 5 }, { id: 'c', cantidad: 1, tienda_compra: 'eroski' }];
+  const rf = repartirLista(its, el, ['eroski', 'dia', 'bm'], 0);
+  const it = (id) => rf.porTienda.flatMap((p) => p.items).find((x) => x.id === id);
+  assert.equal(it('a').t, 'dia');                    // libre: la mas barata
+  assert.equal(it('b').t, 'bm');                     // fijada: tienda y precio elegidos (5 en lugar de 3,9)
+  assert.equal(it('b').coste, 5);
+  assert.equal(it('b').fijo, true);
+  assert.deepEqual(rf.sinPrecio.map((x) => x.id), ['c']); // c no tiene precio en Eroski
+  assert.ok(Math.abs(rf.total - (2 * 1.5 + 5)) < 1e-9);
+  // Tienda evitada por el ahorro minimo: con 1 EUR no se va a Dia y se explica.
+  const rm = repartirLista(items('a', 'b', 'c'), el, ['eroski', 'dia', 'bm'], 1);
+  assert.deepEqual(rm.evitadas, ['dia']);
+  assert.ok(rm.extraPorMin > 0);
+}
+
+// La version del service worker (cache) debe coincidir con la de config.js.
+{
+  const v = /VERSION = '([^']+)'/.exec(readFileSync(new URL('../app/config.js', import.meta.url), 'utf8'))[1];
+  assert.match(readFileSync(new URL('../app/sw.js', import.meta.url), 'utf8'), new RegExp(`CACHE = 'compra-${v.replaceAll('.', '\.')}'`));
+}
 console.log('compare.js: todas las pruebas OK');

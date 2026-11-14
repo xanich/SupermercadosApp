@@ -74,8 +74,9 @@ function crearBase(modo) {
     // recetas: { id: { id, nombre, ingredientes: [{ ingrediente_id, cantidad }] } }
     // menu: { 'dia|comida|quien': receta_id | null }  (dia 0 = lunes ... 6 = domingo; comida: desayuno|comida|cena;
     //   quien: 'ambos' = una receta para los dos, 'p1' / 'p2' = cada persona la suya. Si un hueco tiene p1/p2 es "separado".)
-    estado: { ingredientes: [], elecciones: {}, lista: {}, ajustes: { ...AJUSTES_INICIALES }, candidatos: null, recetas: {}, menu: {} },
+    estado: { ingredientes: [], elecciones: {}, lista: {}, ajustes: { ...AJUSTES_INICIALES }, candidatos: null, recetas: {}, menu: {}, compras: [] },
     faltanTablas: false,
+    faltanCompras: false, // sin tabla `compras` en Supabase (falta ejecutar schema.sql)
     necesitaLogin: false,
     alCambiar: (f) => oyentes.push(f),
     avisar: () => oyentes.forEach((f) => f()),
@@ -101,6 +102,7 @@ export async function crearStoreLocal() {
     Object.assign(e, { ingredientes: guardado.ingredientes, elecciones: guardado.elecciones, lista: guardado.lista });
     e.recetas = guardado.recetas || {};
     e.menu = normalizarMenu(guardado.menu);
+    e.compras = guardado.compras || [];
     e.ajustes = { ...AJUSTES_INICIALES, ...guardado.ajustes };
   } else {
     const ings = (await cargarJson('../data/ingredients.json')) || [];
@@ -125,8 +127,8 @@ export async function crearStoreLocal() {
 
   const guardar = () => {
     try {
-      const { ingredientes, elecciones, lista, ajustes, recetas, menu } = e;
-      localStorage.setItem(CLAVE, JSON.stringify({ ingredientes, elecciones, lista, ajustes, recetas, menu }));
+      const { ingredientes, elecciones, lista, ajustes, recetas, menu, compras } = e;
+      localStorage.setItem(CLAVE, JSON.stringify({ ingredientes, elecciones, lista, ajustes, recetas, menu, compras }));
     } catch {
       /* ignorar */
     }
@@ -161,7 +163,7 @@ export async function crearStoreLocal() {
     return fila.id;
   };
   s.sumarLista = async (cantidades) => {
-    for (const f of filasSumadas(e, cantidades)) e.lista[f.ingrediente_id] = { cantidad: f.cantidad, hecho: false };
+    for (const f of filasSumadas(e, cantidades)) e.lista[f.ingrediente_id] = { ...e.lista[f.ingrediente_id], cantidad: f.cantidad, hecho: false };
     guardar();
   };
   s.guardarReceta = async ({ id, nombre, personas, ingredientes }) => {
@@ -199,10 +201,19 @@ export async function crearStoreLocal() {
     e.lista = {};
     guardar();
   };
+  s.finalizarCompra = async ({ fecha, total, lineas }, ids) => {
+    e.compras.push({ id: `c${Date.now().toString(36)}`, fecha: fecha || ahora(), total, lineas });
+    for (const id of ids) delete e.lista[id];
+    guardar();
+  };
+  s.borrarCompra = async (id) => {
+    e.compras = e.compras.filter((c) => c.id !== id);
+    guardar();
+  };
   s.exportar = () => JSON.stringify({ ...e, candidatos: undefined }, null, 1);
   s.importar = (texto) => {
     const d = JSON.parse(texto);
-    Object.assign(e, { ingredientes: d.ingredientes, elecciones: d.elecciones, lista: d.lista, recetas: d.recetas || {}, menu: normalizarMenu(d.menu) });
+    Object.assign(e, { ingredientes: d.ingredientes, elecciones: d.elecciones, lista: d.lista, recetas: d.recetas || {}, menu: normalizarMenu(d.menu), compras: d.compras || [] });
     e.ajustes = { ...AJUSTES_INICIALES, ...d.ajustes };
     guardar();
   };
@@ -253,7 +264,12 @@ export async function crearStoreSupabase(config) {
     for (const r of [ing, ele, lis, aju]) if (r.error) throw r.error;
     e.ingredientes = ing.data;
     e.elecciones = Object.fromEntries(ele.data.map((x) => [`${x.ingrediente_id}|${x.tienda}`, x]));
-    e.lista = Object.fromEntries(lis.data.map((x) => [x.ingrediente_id, { cantidad: x.cantidad, hecho: x.hecho }]));
+    e.lista = Object.fromEntries(lis.data.map((x) => [x.ingrediente_id, {
+      cantidad: x.cantidad, hecho: x.hecho,
+      // Solo si la base ya tiene esas columnas (si no, no se mandan al guardar y la lista sigue funcionando).
+      ...('tienda_compra' in x ? { tienda_compra: x.tienda_compra ?? null } : {}),
+      ...('precio_pagado' in x ? { precio_pagado: x.precio_pagado == null ? null : Number(x.precio_pagado) } : {}),
+    }]));
     e.ajustes = { ...AJUSTES_INICIALES, ...Object.fromEntries(aju.data.map((x) => [x.clave, x.valor])) };
 
     // Recetas y menu: si sus tablas aun no existen (falta ejecutar schema.sql), el resto sigue funcionando.
@@ -271,6 +287,10 @@ export async function crearStoreSupabase(config) {
       for (const x of rin.data) e.recetas[x.receta_id]?.ingredientes.push({ ingrediente_id: x.ingrediente_id, cantidad: Number(x.cantidad) });
       e.menu = Object.fromEntries(men.data.map((x) => [`${x.dia}|${x.comida}|${x.quien || 'ambos'}`, x.receta_id ?? null]));
     }
+    // Compras terminadas: si la tabla aun no existe, el resto sigue funcionando.
+    const com = await sb.from('compras').select('*').order('fecha', { ascending: false });
+    s.faltanCompras = Boolean(com.error);
+    e.compras = com.error ? [] : com.data.map((x) => ({ id: x.id, fecha: x.fecha, total: Number(x.total), lineas: x.lineas || [] }));
     s.avisar();
   };
   s.recargar = recargar;
@@ -367,6 +387,25 @@ export async function crearStoreSupabase(config) {
     if (error) throw error;
     await recargar();
   };
+  const comprobarCompras = () => {
+    if (s.faltanCompras) throw new Error('Falta la tabla de compras en Supabase: ejecuta sql/schema.sql (ver README).');
+  };
+  s.finalizarCompra = async ({ fecha, total, lineas }, ids) => {
+    comprobarCompras();
+    const ins = await sb.from('compras').insert({ fecha: fecha || ahora(), total, lineas });
+    if (ins.error) throw ins.error;
+    if (ids.length) {
+      const del = await sb.from('lista').delete().in('ingrediente_id', ids);
+      if (del.error) throw del.error;
+    }
+    await recargar();
+  };
+  s.borrarCompra = async (id) => {
+    comprobarCompras();
+    const { error } = await sb.from('compras').delete().eq('id', id);
+    if (error) throw error;
+    await recargar();
+  };
   s.vaciarMenu = async () => {
     comprobarTablas();
     const { error } = await sb.from('menu').delete().gte('dia', 0);
@@ -387,6 +426,7 @@ export async function crearStoreSupabase(config) {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'recetas' }, recargar)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'receta_ingredientes' }, recargar)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'menu' }, recargar)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'compras' }, recargar)
     .subscribe();
   return s;
 }

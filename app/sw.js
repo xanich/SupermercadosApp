@@ -1,6 +1,6 @@
 // Service worker minimo: guarda la "carcasa" de la app para abrirla rapido y sin conexion.
 // Los datos (precios) siempre se piden a la red primero.
-const CACHE = 'compra-v2';
+const CACHE = 'compra-1.1.0';
 const ARCHIVOS = ['./', 'index.html', 'styles.css', 'app.js', 'store.js', 'compare.js', 'config.js', 'icon.svg', 'manifest.webmanifest'];
 
 self.addEventListener('install', (ev) => {

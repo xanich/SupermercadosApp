@@ -318,3 +318,18 @@ select {
 .coste-fila.mejor .coste-imp, .coste-fila.mejor .coste-nota { color: var(--verde); }
 .coste-fila.incompleto .coste-nota { color: var(--aviso); }
 .coste-reparto { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 10px 0 2px; border-top: 2px solid var(--linea); font-weight: 600; }
+
+/* ------------------------------------------------------------------ v1.1: ahorro mínimo, compras, versión */
+.campo select { display: block; width: 100%; margin-top: 6px; min-height: 46px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--linea); background: var(--elevada); font-size: 16px; font-weight: 400; }
+.chip-min { min-height: 30px; padding: 0 12px; border-radius: 999px; font-size: 0.8rem; font-weight: 600; color: var(--verde); background: var(--verde-claro); border-color: transparent; }
+.chip-min.en-hero { display: inline-block; margin: 10px 0 0 8px; color: #fff; background: rgba(255, 255, 255, 0.16); }
+.nota-min { margin: 10px 0 0; }
+.etq.fijo { background: var(--verde-claro); color: var(--verde); }
+button.ancho { width: 100%; margin-top: 14px; }
+.centro { text-align: center; }
+.version { margin: 18px 0 8px; font-size: 0.8rem; }
+.compra-cab { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 16px; min-height: 64px; border: 0; border-radius: 0; background: transparent; text-align: left; }
+.compra-sub { display: block; font-size: 0.85rem; margin-top: 2px; }
+.compra-total { font: 600 1.2rem var(--serif); }
+.compra-linea { display: flex; justify-content: space-between; gap: 12px; padding: 8px 16px; border-top: 1px solid var(--linea); font-size: 0.92rem; }
+.compra-tienda { border-top: 1px solid var(--linea); }

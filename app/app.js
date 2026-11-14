@@ -1,6 +1,6 @@
-import { config } from './config.js';
+import { config, VERSION } from './config.js';
 import { crearStoreLocal, crearStoreSupabase } from './store.js';
-import { TIENDAS, nombreTienda, asignar, tiendasDe, factorMenu, sumarRecetas, costeReceta, diasDesde, esAntiguo } from './compare.js';
+import { TIENDAS, nombreTienda, asignar, repartirLista, tiendasDe, factorMenu, sumarRecetas, costeReceta, diasDesde, esAntiguo } from './compare.js';
 
 const $ = (s) => document.querySelector(s);
 const vista = $('#vista');
@@ -21,7 +21,8 @@ const BUSQUEDA = {
 // La carnicería (Halal) no tiene web: devuelve null y no se muestra enlace.
 const enlaceTienda = (t, consulta, e) => (/^https:\/\//.test(e?.url || '') ? e.url : BUSQUEDA[t]?.(encodeURIComponent(consulta)) ?? null);
 const AUTO = new Set(['bm', 'eroski']); // tiendas cuyo precio puede leerse solo
-const TABS = ['lista', 'menu', 'recetas', 'precios', 'productos', 'ajustes'];
+const TABS = ['lista', 'cocina', 'precios', 'productos', 'compras', 'ajustes'];
+const COCINA = [{ id: 'menu', nombre: 'Menú' }, { id: 'recetas', nombre: 'Recetas' }]; // «Cocina» junta las dos en una pestaña
 const PASO_KG = 0.25;
 const PASO_REC_KG = 0.05; // en recetas, de 50 en 50 g
 const DIAS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
@@ -60,7 +61,7 @@ let store;
 const ui = {
   tab: 'lista', buscarProd: '', buscarAdd: '', buscarPrecio: '', preciosModo: 'lista', preciosReceta: null, pasados: new Set(), // pasados: días ya pasados a la lista (solo en este móvil)
   hoja: null, candidato: null, receta: null, buscarRec: '',
-  yo: leerYo(), menuVer: 'mio', ni: null, ep: null,
+  yo: leerYo(), menuVer: 'mio', ni: null, ep: null, cocina: 'menu', le: null, compraAbierta: new Set(),
 };
 
 // ------------------------------------------------------------------ utilidades
@@ -92,7 +93,7 @@ function itemsLista() {
   const por = Object.fromEntries(ingredientes.map((i) => [i.id, i]));
   return Object.entries(lista)
     .filter(([id]) => por[id])
-    .map(([id, v]) => ({ id, nombre: por[id].nombre, consulta: por[id].consulta, modo: por[id].modo || 'unidad', carne: Boolean(por[id].carne), cantidad: Number(v.cantidad), hecho: v.hecho }))
+    .map(([id, v]) => ({ id, nombre: por[id].nombre, consulta: por[id].consulta, modo: por[id].modo || 'unidad', carne: Boolean(por[id].carne), cantidad: Number(v.cantidad), hecho: v.hecho, tienda_compra: v.tienda_compra || null, precio_pagado: v.precio_pagado ?? null }))
     .sort(porNombre);
 }
 
@@ -122,7 +123,7 @@ function vistaLista() {
       <button class="primario" data-acc="abrirAdd">Añadir ingredientes</button></div>`;
   }
 
-  const r = asignar(items, elecciones, ajustes.tiendas, Number(ajustes.ahorroMin) || 0);
+  const r = repartirLista(items, elecciones, ajustes.tiendas, Number(ajustes.ahorroMin) || 0);
   const antiguos = r.porTienda.flatMap((p) => p.items).filter((x) => esAntiguo(x.e, dias)).length + r.sinPrecio.length;
   const hechos = items.filter((i) => i.hecho).length;
   const ahorro = r.unica ? r.unica.total - r.total : 0;
@@ -134,6 +135,7 @@ function vistaLista() {
     <div class="total-h">${euro.format(r.total)}</div>
     <div class="meta-h">${r.porTienda.length} ${r.porTienda.length === 1 ? 'tienda' : 'tiendas'} · ${items.length} ${items.length === 1 ? 'producto' : 'productos'}</div>
     ${ahorro > 0.005 ? `<div class="ahorro-h">Ahorras ${euro.format(ahorro)} frente a todo en ${nombreTienda(r.unica.t)}</div>` : ''}
+    ${chipAhorroMin(ajustes, true)}
     <div class="progreso" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><span style="width:${pct}%"></span></div>
     <div class="meta-h">${hechos} de ${items.length} comprados</div>
   </section>`;
@@ -143,6 +145,11 @@ function vistaLista() {
       <button data-acc="ir" data-tab="precios" data-modo="lista">Actualizar</button></div>`;
   }
 
+  if (r.evitadas.length) {
+    const nombres = r.evitadas.map(nombreTienda).join(' y ');
+    h += `<div class="aviso aviso-min"><span>Por el ahorro mínimo (${euro.format(Number(ajustes.ahorroMin))}) no hace falta ir a ${esc(nombres)}${r.extraPorMin > 0.005 ? `: pagas ${euro.format(r.extraPorMin)} más` : ''}.</span>
+      <button data-acc="ir" data-tab="ajustes">Cambiar</button></div>`;
+  }
   for (const p of r.porTienda) {
     h += `<section class="tarjeta"><div class="tienda-cab">${punto(p.t)}<h2>${nombreTienda(p.t)}</h2>
       <span class="suave">${p.items.length} ${p.items.length === 1 ? 'producto' : 'productos'}</span>
@@ -155,9 +162,20 @@ function vistaLista() {
     for (const x of r.sinPrecio) h += filaItem(x, null, '', '');
     h += '</section>';
   }
+  if (hechos) {
+    const tot = r.porTienda.flatMap((p) => p.items).filter((x) => x.hecho).reduce((s, x) => s + x.coste, 0);
+    h += `<button class="primario ancho" data-acc="finalizarCompra">Compra finalizada · ${hechos} ${hechos === 1 ? 'producto' : 'productos'} · ${euro.format(tot)}</button>
+      <p class="suave centro">Guarda lo marcado en Compras y lo quita de la lista. Lo que no esté marcado se queda para la próxima.</p>`;
+  }
   h += `<p class="pie-lista">${hechos ? '<button data-acc="limpiar">Quitar lo comprado</button>' : ''}
     <button class="peligro" data-acc="vaciarLista">Vaciar lista</button></p>`;
   return h;
+}
+
+// Etiqueta que dice cuál es el ahorro mínimo por tienda y lleva a Ajustes para cambiarlo.
+function chipAhorroMin(ajustes, enHero = false) {
+  const min = Number(ajustes.ahorroMin) || 0;
+  return `<button class="chip-min${enHero ? ' en-hero' : ''}" data-acc="ir" data-tab="ajustes" aria-label="Ahorro mínimo por tienda; cambiar en Ajustes">${min > 0 ? `Ahorro mín. por tienda: ${euro.format(min)}` : 'Ahorro mín. por tienda: desactivado'}</button>`;
 }
 
 function detalleUnidad(x) {
@@ -168,7 +186,7 @@ function detalleUnidad(x) {
 function filaItem(x, coste, etq, extra) {
   return `<div class="item ${x.hecho ? 'hecho' : ''}">
     <div class="check"><input class="redonda" type="checkbox" data-acc="hecho" data-id="${esc(x.id)}" ${x.hecho ? 'checked' : ''} aria-label="Comprado: ${esc(x.nombre)}"></div>
-    <div><div class="nombre">${esc(x.nombre)}</div><div class="meta">${etq}${extra}</div></div>
+    <div><div class="nombre">${esc(x.nombre)}</div><div class="meta">${x.fijo ? '<span class="etq fijo">a mano</span>' : etq}${extra}</div></div>
     <div class="precio-fila num">${coste == null ? '' : euro.format(coste)}</div>
     <div class="controles">
       <div class="cantidad">
@@ -176,6 +194,7 @@ function filaItem(x, coste, etq, extra) {
         <button class="valor" data-acc="cant" data-id="${esc(x.id)}" aria-label="Cambiar cantidad">${fmtCantidad(x.modo, x.cantidad)}</button>
         <button data-acc="mas" data-id="${esc(x.id)}" aria-label="Más">+</button>
       </div>
+      <button class="mini suave-b" data-acc="editarLinea" data-id="${esc(x.id)}" aria-label="Editar ${esc(x.nombre)}">Editar</button>
       <button class="mini suave-b peligro" data-acc="quitar" data-id="${esc(x.id)}" aria-label="Quitar ${esc(x.nombre)}">Quitar</button>
     </div>
   </div>`;
@@ -213,6 +232,7 @@ function resumenCosteReceta(receta, items) {
     <div class="bloque-cab"><h2>Coste de la receta</h2><span class="suave">para ${receta.personas === 1 ? '1 persona' : '2 personas'}</span></div>
     ${filas}
     <div class="coste-reparto"><span>Repartiendo entre tiendas</span><span>${reparto}</span></div>
+    <p class="nota-min">${chipAhorroMin(ajustes)}</p>
   </div></section>`;
 }
 
@@ -455,6 +475,87 @@ function vistaMenu() {
   return h;
 }
 
+// Menú y Recetas comparten pestaña: un selector arriba elige cuál se ve.
+function vistaCocina() {
+  const sel = `<div class="segmentos" role="group" aria-label="Menú o recetas">${COCINA.map((c) =>
+    `<button data-acc="verCocina" data-ver="${c.id}" aria-pressed="${ui.cocina === c.id}">${c.nombre}</button>`).join('')}</div>`;
+  return sel + (ui.cocina === 'recetas' ? vistaRecetas() : vistaMenu());
+}
+
+const redondear2 = (n) => Math.round(n * 100) / 100;
+const fmtFecha = (iso) => new Date(iso).toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' });
+
+function vistaCompras() {
+  const { compras } = store.estado;
+  const orden = [...compras].sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+  let h = `<div class="cabecera"><div><h1>Compras</h1><p class="suave">Lo que habéis gastado en cada compra.</p></div></div>`;
+  if (store.faltanCompras) {
+    h += `<div class="aviso"><span>Falta la tabla de compras en Supabase: pega <code>sql/schema.sql</code> en el SQL Editor y pulsa Run.</span></div>`;
+  }
+  if (!orden.length) {
+    return h + `<div class="vacio"><h2>Aún no hay compras</h2>
+      <p>En la lista, marca lo que vayas metiendo en el carrito y pulsa «Compra finalizada». Aquí quedará el total de cada compra.</p>
+      <button class="primario" data-acc="ir" data-tab="lista">Ir a la lista</button></div>`;
+  }
+  const meses = new Map();
+  for (const c of orden) {
+    const d = new Date(c.fecha);
+    const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const m = meses.get(k) || { nombre: d.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' }), n: 0, total: 0 };
+    m.n++;
+    m.total += Number(c.total) || 0;
+    meses.set(k, m);
+  }
+  h += `<section class="tarjeta"><div class="bloque"><h2>Por meses</h2>${[...meses.values()].map((m) =>
+    `<div class="coste-reparto"><span>${esc(m.nombre)} <span class="suave">· ${m.n} ${m.n === 1 ? 'compra' : 'compras'}</span></span><strong class="num">${euro.format(m.total)}</strong></div>`).join('')}</div></section>`;
+  for (const c of orden) {
+    const abierta = ui.compraAbierta.has(c.id);
+    const tiendas = [...new Set(c.lineas.map((x) => x.tienda).filter(Boolean))];
+    h += `<section class="tarjeta compra"><button class="compra-cab" data-acc="verCompra" data-id="${esc(c.id)}" aria-expanded="${abierta}">
+      <span><strong>${esc(fmtFecha(c.fecha))}</strong><span class="suave compra-sub">${c.lineas.length} ${c.lineas.length === 1 ? 'producto' : 'productos'}${tiendas.length ? ` · ${tiendas.map((t) => esc(nombreTienda(t))).join(', ')}` : ''}</span></span>
+      <span class="num compra-total">${euro.format(c.total)}</span></button>`;
+    if (abierta) {
+      const por = {};
+      for (const x of c.lineas) (por[x.tienda || ''] ||= []).push(x);
+      h += Object.entries(por).map(([t, ls]) => `<div class="compra-tienda"><div class="tienda-cab">${t ? punto(t) : ''}<h2>${t ? esc(nombreTienda(t)) : 'Sin precio'}</h2>
+        <span class="total num">${euro.format(ls.reduce((s, x) => s + (Number(x.coste) || 0), 0))}</span></div>
+        ${ls.sort(porNombre).map((x) => `<div class="compra-linea"><span>${esc(x.nombre)} <span class="suave">${fmtCantidad(x.modo, Number(x.cantidad))}</span></span>
+          <span class="num">${x.coste ? euro.format(x.coste) : '—'}</span></div>`).join('')}</div>`).join('');
+      h += `<p class="pie-lista"><button class="peligro" data-acc="borrarCompra" data-id="${esc(c.id)}">Borrar esta compra</button></p>`;
+    }
+    h += '</section>';
+  }
+  return h;
+}
+
+// Hoja para cambiar cuánto se compra, dónde y a qué precio una línea de la lista.
+function abrirEditarLinea(id) {
+  const { elecciones, ajustes } = store.estado;
+  const items = itemsLista();
+  const it = items.find((x) => x.id === id);
+  if (!it) return;
+  const r = repartirLista(items, elecciones, ajustes.tiendas, Number(ajustes.ahorroMin) || 0);
+  const actual = r.porTienda.flatMap((p) => p.items).find((x) => x.id === id);
+  const tSel = it.tienda_compra || actual?.t || ajustes.tiendas[0];
+  const precio = it.precio_pagado ?? actual?.e?.precio ?? elecciones[`${id}|${tSel}`]?.precio ?? null;
+  const peso = it.modo === 'peso';
+  ui.le = { id, auto: actual && !actual.fijo ? { t: actual.t, precio: actual.e.precio } : null };
+  ui.hoja = 'linea';
+  hoja.innerHTML = `<div class="hoja-int">
+    <div class="hoja-cab"><h2>${esc(it.nombre)}</h2><button class="icono" data-acc="cerrar" aria-label="Cerrar">✕</button></div>
+    <label class="campo"><span>${peso ? 'Gramos' : 'Unidades'}</span>
+      <input type="text" inputmode="decimal" id="leCant" autocomplete="off" value="${peso ? Math.round(it.cantidad * 1000) : it.cantidad}"></label>
+    <label class="campo"><span>Tienda donde lo compras</span>
+      <select id="leTienda" data-acc="leTienda">${TIENDAS.map((t) => `<option value="${t.id}" ${t.id === tSel ? 'selected' : ''}>${t.nombre}</option>`).join('')}</select></label>
+    <label class="campo"><span>Precio ${peso ? '(€/kg)' : '(€ por unidad)'}</span>
+      <input type="text" inputmode="decimal" id="lePrecio" autocomplete="off" placeholder="Sin precio" value="${precio != null ? Number(precio).toFixed(2).replace('.', ',') : ''}"></label>
+    <p class="suave">Si lo compras en otra tienda o a otro precio, se guarda solo para esta línea y no cambia los precios de Precios.</p>
+    <button class="primario" data-acc="guardarLinea">Guardar</button>
+    ${it.tienda_compra ? '<button data-acc="autoLinea">Volver al reparto automático</button>' : ''}
+  </div>`;
+  hoja.showModal();
+}
+
 function vistaAjustes() {
   const { ajustes } = store.estado;
   const local = store.modo === 'local';
@@ -481,7 +582,8 @@ function vistaAjustes() {
         <p><label class="suave">Restaurar copia: <input type="file" accept="application/json" data-acc="importar"></label></p>
         <p><button class="peligro" data-acc="reiniciar">Borrar todo y empezar de nuevo</button></p>`
       : '<p><button data-acc="salir">Cerrar sesión</button></p>'}
-    </div></section>`;
+    </div></section>
+    <p class="suave centro version">Versión ${esc(VERSION)}</p>`;
 }
 
 // ------------------------------------------------------------------ hojas inferiores
@@ -676,10 +778,10 @@ function render() {
     return;
   }
   const act = document.activeElement;
-  const foco = act && vista.contains(act) && act.dataset.acc
+  const foco = act && vista.contains(act) && act.dataset.acc && !act.matches('select') // devolver el foco a un select reabre su lista en el móvil
     ? { sel: selectorDe(act), texto: act.matches('input[type=text], input[type=search]'), valor: act.value, ini: act.selectionStart, fin: act.selectionEnd }
     : null;
-  const vistas = { lista: vistaLista, menu: vistaMenu, recetas: vistaRecetas, precios: vistaPrecios, productos: vistaProductos, ajustes: vistaAjustes };
+  const vistas = { lista: vistaLista, cocina: vistaCocina, precios: vistaPrecios, productos: vistaProductos, compras: vistaCompras, ajustes: vistaAjustes };
   vista.innerHTML = vistas[ui.tab]();
   if (foco) {
     const el = vista.querySelector(foco.sel);
@@ -694,6 +796,7 @@ function render() {
 }
 
 function irA(tab) {
+  if (tab === 'menu' || tab === 'recetas') { ui.cocina = tab; tab = 'cocina'; } // enlaces y avisos antiguos
   ui.tab = TABS.includes(tab) ? tab : 'lista';
   history.replaceState(null, '', `#${ui.tab}`);
   render();
@@ -713,7 +816,7 @@ async function accion(fn) {
 hoja.addEventListener('click', (ev) => { if (ev.target === hoja && !['receta', 'nuevo'].includes(ui.hoja)) hoja.close(); });
 hoja.addEventListener('close', () => {
   if (hoja.open) return; // evento tardío de una hoja anterior: ya se ha abierto otra y no hay que borrar su estado
-  ui.hoja = null; ui.receta = null; ui.ni = null; ui.ep = null;
+  ui.hoja = null; ui.receta = null; ui.ni = null; ui.ep = null; ui.le = null;
 });
 
 document.addEventListener('click', (ev) => {
@@ -727,6 +830,59 @@ document.addEventListener('click', (ev) => {
       if (b.dataset.modo) ui.preciosModo = b.dataset.modo;
       return irA(b.dataset.tab);
     case 'abrirAdd': return abrirAdd();
+    case 'verCocina': ui.cocina = b.dataset.ver; return render();
+    case 'verCompra':
+      if (!ui.compraAbierta.delete(id)) ui.compraAbierta.add(id);
+      return render();
+    case 'borrarCompra': {
+      if (!confirm('Se borrará esta compra del historial. ¿Seguro?')) return;
+      return accion(async () => { await store.borrarCompra(id); avisar('Compra borrada'); });
+    }
+    case 'editarLinea': return abrirEditarLinea(id);
+    case 'autoLinea':
+      return accion(async () => {
+        await store.setLista(ui.le.id, { tienda_compra: null, precio_pagado: null });
+        hoja.close();
+      });
+    case 'guardarLinea': {
+      const { id: lid, auto } = ui.le;
+      const peso = esPeso(lid);
+      const v = aNumero($('#leCant').value);
+      if (!Number.isFinite(v) || v <= 0) return alert('Escribe una cantidad mayor que 0.');
+      const textoP = $('#lePrecio').value.trim();
+      const p = textoP === '' ? null : aNumero(textoP);
+      if (p !== null && (!Number.isFinite(p) || p < 0)) return alert('Escribe un precio válido, por ejemplo 2,50.');
+      const tienda = $('#leTienda').value;
+      const cantidad = peso ? Math.round(v) / 1000 : Math.max(1, Math.round(v));
+      // Si queda igual que el reparto automático, no se fija nada: la línea sigue el reparto.
+      const igual = auto && auto.t === tienda && (p === null || Math.abs(p - auto.precio) < 0.005) && !lista[lid]?.tienda_compra;
+      return accion(async () => {
+        await store.setLista(lid, igual ? { cantidad } : { cantidad, tienda_compra: tienda, precio_pagado: p });
+        hoja.close();
+      });
+    }
+    case 'finalizarCompra': {
+      const { elecciones: el0, ajustes } = store.estado;
+      const items = itemsLista();
+      const r = repartirLista(items, el0, ajustes.tiendas, Number(ajustes.ahorroMin) || 0);
+      const hechos = new Set(items.filter((x) => x.hecho).map((x) => x.id));
+      if (!hechos.size) return;
+      const lineas = [];
+      for (const p of r.porTienda) {
+        for (const x of p.items) {
+          if (hechos.has(x.id)) lineas.push({ ingrediente_id: x.id, nombre: x.nombre, modo: x.modo, cantidad: x.cantidad, tienda: p.t, precio: x.e.precio, coste: redondear2(x.coste) });
+        }
+      }
+      for (const x of r.sinPrecio) {
+        if (hechos.has(x.id)) lineas.push({ ingrediente_id: x.id, nombre: x.nombre, modo: x.modo, cantidad: x.cantidad, tienda: null, precio: null, coste: 0 });
+      }
+      const total = redondear2(lineas.reduce((s, x) => s + x.coste, 0));
+      if (!confirm(`Guardar esta compra: ${lineas.length} ${lineas.length === 1 ? 'producto' : 'productos'}, ${euro.format(total)}.\nSe quitan de la lista; lo que no esté marcado se queda.`)) return;
+      return accion(async () => {
+        await store.finalizarCompra({ fecha: new Date().toISOString(), total, lineas }, [...hechos]);
+        avisar(`Compra guardada: ${euro.format(total)}`);
+      });
+    }
     case 'cerrar': return hoja.close();
     case 'toggleAdd': return accion(() => store.setLista(id, lista[id] ? null : { cantidad: cantidadInicial(id) }));
     case 'quitar': return accion(() => store.setLista(id, null));
@@ -1017,6 +1173,11 @@ document.addEventListener('change', (ev) => {
     case 'recetaPrecios':
       ui.preciosReceta = el.value;
       return render();
+    case 'leTienda': {
+      const pr = store.estado.elecciones[`${ui.le.id}|${el.value}`]?.precio;
+      $('#lePrecio').value = pr != null ? Number(pr).toFixed(2).replace('.', ',') : '';
+      return;
+    }
     case 'nombresP': {
       const i = Number(el.dataset.i);
       const nombres = nombresP();
@@ -1098,7 +1259,6 @@ document.addEventListener('input', (ev) => {
     pendiente = true;
     setTimeout(() => { pendiente = false; render(); }, 0);
   });
-  ui.tab = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'lista';
-  render();
+  irA(location.hash.slice(1));
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 })();

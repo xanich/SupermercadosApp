@@ -104,6 +104,39 @@ export function asignar(items, elecciones, tiendas, ahorroMin = 0) {
 }
 
 /**
+ * Como asignar(), pero respetando las lineas "fijadas a mano": las que tienen tienda_compra
+ * (y, opcionalmente, precio_pagado = precio por unidad o por kg) van a esa tienda y a ese precio.
+ * Ademas devuelve `base` (reparto del resto, solo con las lineas libres) y `sinMin` (el mismo
+ * reparto sin ahorro minimo) para poder explicar que tiendas se han evitado.
+ */
+export function repartirLista(items, elecciones, tiendas, ahorroMin = 0, ahora = new Date().toISOString()) {
+  const fijos = items.filter((i) => i.tienda_compra);
+  const libres = items.filter((i) => !i.tienda_compra);
+  const base = asignar(libres, elecciones, tiendas, ahorroMin);
+  const sinMin = ahorroMin > 0 ? asignar(libres, elecciones, tiendas, 0) : base;
+  const porTienda = base.porTienda.map((p) => ({ ...p, items: [...p.items] }));
+  const sinPrecio = [...base.sinPrecio];
+  let total = base.total;
+  for (const x of fijos) {
+    const e0 = elecciones[`${x.id}|${x.tienda_compra}`];
+    const precio = x.precio_pagado ?? e0?.precio ?? null;
+    if (precio == null) {
+      sinPrecio.push(x);
+      continue;
+    }
+    const coste = precio * x.cantidad;
+    let g = porTienda.find((p) => p.t === x.tienda_compra);
+    if (!g) porTienda.push((g = { t: x.tienda_compra, items: [], total: 0 }));
+    g.items.push({ ...x, t: x.tienda_compra, e: { ...(e0 || {}), precio, origen: 'manual', actualizado: ahora }, coste, fijo: true });
+    g.total += coste;
+    total += coste;
+  }
+  porTienda.sort((a, b) => b.total - a.total);
+  const evitadas = sinMin.porTienda.map((p) => p.t).filter((t) => !base.porTienda.some((p) => p.t === t));
+  return { porTienda, sinPrecio, total, unica: base.unica, base, sinMin, evitadas, extraPorMin: base.total - sinMin.total };
+}
+
+/**
  * Cuanto cuesta una receta (sus ingredientes y cantidades tal como están escritas).
  * items: [{id, cantidad, carne?}] · activas: ids de tiendas activas · ahorroMin: como en asignar().
  * - porTienda: una entrada por cadena (la carne usa Halal en el sitio de Dia, como en la tabla de precios):

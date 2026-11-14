@@ -53,6 +53,18 @@ create table if not exists lista (
   hecho          boolean not null default false
 );
 
+-- Linea de la lista fijada a mano: tienda donde se compra y precio pagado (por unidad o por kg).
+alter table lista add column if not exists tienda_compra text;
+alter table lista add column if not exists precio_pagado numeric(8,2);
+
+-- Compras terminadas: fecha, total y las lineas (ingrediente, cantidad, tienda, precio, coste).
+create table if not exists compras (
+  id     uuid primary key default gen_random_uuid(),
+  fecha  timestamptz not null default now(),
+  total  numeric(9,2) not null,
+  lineas jsonb not null default '[]'
+);
+
 -- Ajustes compartidos (tiendas activas, ahorro minimo por tienda...).
 create table if not exists ajustes (
   clave  text primary key,
@@ -104,11 +116,12 @@ alter table ajustes      enable row level security;
 alter table recetas      enable row level security;
 alter table receta_ingredientes enable row level security;
 alter table menu         enable row level security;
+alter table compras      enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['ingredientes','elecciones','historial','lista','ajustes','recetas','receta_ingredientes','menu'] loop
+  foreach t in array array['ingredientes','elecciones','historial','lista','ajustes','recetas','receta_ingredientes','menu','compras'] loop
     execute format('drop policy if exists "solo_autenticados" on %I', t);
     execute format(
       'create policy "solo_autenticados" on %I for all to authenticated using (true) with check (true)', t);
@@ -120,7 +133,7 @@ end $$;
 do $$
 declare t text;
 begin
-  foreach t in array array['lista','elecciones','ingredientes','recetas','receta_ingredientes','menu'] loop
+  foreach t in array array['lista','elecciones','ingredientes','recetas','receta_ingredientes','menu','compras'] loop
     if not exists (select 1 from pg_publication_tables
                    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
       execute format('alter publication supabase_realtime add table %I', t);
